@@ -1,6 +1,6 @@
 Option Explicit
 
-Sub ListFilesAndFoldersInSelectedFolder()
+Sub ListFilesAndFoldersInSelectedFolder_V2()
 
     '--- 変数の宣言 ---
     Dim folderPath As String
@@ -10,36 +10,45 @@ Sub ListFilesAndFoldersInSelectedFolder()
     Dim file As Object
     Dim ws As Worksheet
     Dim rowNum As Long
+    Dim sheetName As String
+    
+    sheetName = "ファイル一覧" ' 出力先のシート名を指定
 
     '--- 1. ユーザーにフォルダを選択させる ---
     With Application.FileDialog(msoFileDialogFolderPicker)
         .Title = "ファイル一覧を取得するフォルダを選択してください"
         .AllowMultiSelect = False
         
-        ' ダイアログを表示し、フォルダが選択されなかった場合はマクロを終了
         If .Show <> -1 Then
             MsgBox "処理がキャンセルされました。", vbInformation
             Exit Sub
         End If
         
-        ' 選択されたフォルダのパスを取得
         folderPath = .SelectedItems(1)
     End With
 
-    '--- 2. 結果を書き込むシートを準備 ---
-    Set ws = ThisWorkbook.ActiveSheet
-    ws.Cells.ClearContents ' シートの内容を一旦すべてクリア
+    '--- 2. "ファイル一覧"シートの準備 ---
+    ' 既存のシートを削除（エラーを無視して実行）
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    ThisWorkbook.Sheets(sheetName).Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
     
-    ' ヘッダー（見出し）を作成
+    ' 新しいシートを先頭に追加
+    Set ws = ThisWorkbook.Sheets.Add(Before:=ThisWorkbook.Sheets(1))
+    ws.Name = sheetName
+    
+    ' ヘッダーを作成
     ws.Cells(1, 1).Value = "名前"
     ws.Cells(1, 2).Value = "種類"
-    ws.Cells(1, 1).Resize(1, 2).Font.Bold = True ' ヘッダーを太字に
+    ws.Cells(1, 1).Resize(1, 2).Font.Bold = True
 
     '--- 3. FileSystemObjectを使用してファイルとフォルダの情報を取得 ---
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set targetFolder = fso.GetFolder(folderPath)
 
-    rowNum = 2 ' 2行目からデータの書き込みを開始
+    rowNum = 2 ' 2行目から書き込み開始
 
     '--- 4. フォルダの一覧を書き出す ---
     For Each subFolder In targetFolder.SubFolders
@@ -56,7 +65,7 @@ Sub ListFilesAndFoldersInSelectedFolder()
     Next file
 
     '--- 6. 後片付け ---
-    ws.Columns("A:B").AutoFit ' 列の幅を自動調整
+    ws.Columns("A:B").AutoFit
     Set fso = Nothing
     Set targetFolder = Nothing
     Set subFolder = Nothing
@@ -64,6 +73,6 @@ Sub ListFilesAndFoldersInSelectedFolder()
     Set ws = Nothing
 
     '--- 7. 完了メッセージ ---
-    MsgBox "フォルダ内の一覧表示が完了しました。", vbInformation
+    MsgBox "「" & sheetName & "」シートに一覧表示が完了しました。", vbInformation
 
 End Sub
