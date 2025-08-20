@@ -1,6 +1,6 @@
 Option Explicit
 
-Sub ListFilesAndFolders_with_Hyperlink_Option()
+Sub ListFilesAndFolders_with_All_Hyperlinks()
 
     '--- 変数の宣言 ---
     Dim folderPath As String
@@ -19,7 +19,8 @@ Sub ListFilesAndFolders_with_Hyperlink_Option()
     With Application.FileDialog(msoFileDialogFolderPicker)
         .Title = "ファイル一覧を取得するフォルダを選択してください"
         .AllowMultiSelect = False
-        If .Show <> -1 Then
+        
+        If .Show = -1 Then '「OK」が押されたか正しく判定
             folderPath = .SelectedItems(1)
         Else
             MsgBox "処理がキャンセルされました。", vbInformation
@@ -28,13 +29,12 @@ Sub ListFilesAndFolders_with_Hyperlink_Option()
     End With
 
     '--- 2. ハイパーリンクを設定するかユーザーに確認 ---
-    If MsgBox("ファイル名にハイパーリンクを設定しますか？" & vbCrLf & "(クリックするとファイルが開くようになります)", _
+    If MsgBox("ファイル名とフォルダ名にハイパーリンクを設定しますか？" & vbCrLf & "(クリックするとファイルやフォルダが開くようになります)", _
                vbYesNo + vbQuestion, "ハイパーリンクの設定確認") = vbYes Then
         addHyperlinks = True
     Else
         addHyperlinks = False
     End If
-
 
     '--- 3. "ファイル一覧"シートの準備 ---
     Application.DisplayAlerts = False
@@ -60,17 +60,21 @@ Sub ListFilesAndFolders_with_Hyperlink_Option()
     For Each subFolder In targetFolder.SubFolders
         ws.Cells(rowNum, 1).Value = subFolder.Name
         ws.Cells(rowNum, 2).Value = "フォルダ"
+        
+        ' ★変更点: フォルダにもハイパーリンクを追加
+        If addHyperlinks Then
+            ws.Hyperlinks.Add Anchor:=ws.Cells(rowNum, 1), Address:=subFolder.Path
+        End If
+        
         rowNum = rowNum + 1
     Next subFolder
 
     '--- 6. ファイルの一覧を書き出す ---
     For Each file In targetFolder.Files
         If Left(file.Name, 2) <> "~$" Then
-            ' セルにファイル名を書き込む
             ws.Cells(rowNum, 1).Value = file.Name
             ws.Cells(rowNum, 2).Value = "ファイル"
             
-            ' ★もしユーザーが「はい」を選んでいたら、ハイパーリンクを追加
             If addHyperlinks Then
                 ws.Hyperlinks.Add Anchor:=ws.Cells(rowNum, 1), Address:=file.Path
             End If
