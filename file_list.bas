@@ -1,6 +1,6 @@
 Option Explicit
 
-Sub ListFilesAndFoldersInSelectedFolder_V2()
+Sub ListFilesAndFoldersInSelectedFolder_V4()
 
     '--- 変数の宣言 ---
     Dim folderPath As String
@@ -28,18 +28,15 @@ Sub ListFilesAndFoldersInSelectedFolder_V2()
     End With
 
     '--- 2. "ファイル一覧"シートの準備 ---
-    ' 既存のシートを削除（エラーを無視して実行）
     Application.DisplayAlerts = False
     On Error Resume Next
     ThisWorkbook.Sheets(sheetName).Delete
     On Error GoTo 0
     Application.DisplayAlerts = True
     
-    ' 新しいシートを先頭に追加
     Set ws = ThisWorkbook.Sheets.Add(Before:=ThisWorkbook.Sheets(1))
     ws.Name = sheetName
     
-    ' ヘッダーを作成
     ws.Cells(1, 1).Value = "名前"
     ws.Cells(1, 2).Value = "種類"
     ws.Cells(1, 1).Resize(1, 2).Font.Bold = True
@@ -48,20 +45,23 @@ Sub ListFilesAndFoldersInSelectedFolder_V2()
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set targetFolder = fso.GetFolder(folderPath)
 
-    rowNum = 2 ' 2行目から書き込み開始
+    rowNum = 2
 
     '--- 4. フォルダの一覧を書き出す ---
     For Each subFolder In targetFolder.SubFolders
         ws.Cells(rowNum, 1).Value = subFolder.Name
-        ws.Cells(rowNum, 2).Value = "📁 フォルダ"
+        ws.Cells(rowNum, 2).Value = "フォルダ"
         rowNum = rowNum + 1
     Next subFolder
 
-    '--- 5. ファイルの一覧を書き出す ---
+    '--- 5. ファイルの一覧を書き出す（一時ファイルを除外） ---
     For Each file In targetFolder.Files
-        ws.Cells(rowNum, 1).Value = file.Name
-        ws.Cells(rowNum, 2).Value = "📄 ファイル"
-        rowNum = rowNum + 1
+        ' ★ファイル名が "~$" で始まっていないかチェック
+        If Left(file.Name, 2) <> "~$" Then
+            ws.Cells(rowNum, 1).Value = file.Name
+            ws.Cells(rowNum, 2).Value = "ファイル"
+            rowNum = rowNum + 1
+        End If
     Next file
 
     '--- 6. 後片付け ---
