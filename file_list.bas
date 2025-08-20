@@ -1,6 +1,6 @@
 Option Explicit
 
-Sub ListFilesAndFoldersInSelectedFolder_Final()
+Sub ListFilesAndFolders_with_Hyperlink_Option()
 
     '--- 変数の宣言 ---
     Dim folderPath As String
@@ -11,61 +11,75 @@ Sub ListFilesAndFoldersInSelectedFolder_Final()
     Dim ws As Worksheet
     Dim rowNum As Long
     Dim sheetName As String
-    
-    sheetName = "ファイル一覧" ' 出力先のシート名を指定
+    Dim addHyperlinks As Boolean ' ハイパーリンクを追加するかどうかのフラグ
+
+    sheetName = "ファイル一覧"
 
     '--- 1. ユーザーにフォルダを選択させる ---
     With Application.FileDialog(msoFileDialogFolderPicker)
         .Title = "ファイル一覧を取得するフォルダを選択してください"
         .AllowMultiSelect = False
-        
         If .Show <> -1 Then
+            folderPath = .SelectedItems(1)
+        Else
             MsgBox "処理がキャンセルされました。", vbInformation
             Exit Sub
         End If
-        
-        folderPath = .SelectedItems(1)
     End With
 
-    '--- 2. "ファイル一覧"シートの準備（アクティブなワークブックに対して実行）---
+    '--- 2. ハイパーリンクを設定するかユーザーに確認 ---
+    If MsgBox("ファイル名にハイパーリンクを設定しますか？" & vbCrLf & "(クリックするとファイルが開くようになります)", _
+               vbYesNo + vbQuestion, "ハイパーリンクの設定確認") = vbYes Then
+        addHyperlinks = True
+    Else
+        addHyperlinks = False
+    End If
+
+
+    '--- 3. "ファイル一覧"シートの準備 ---
     Application.DisplayAlerts = False
     On Error Resume Next
-    ' ★変更点: 現在アクティブなブックのシートを削除
     ActiveWorkbook.Sheets(sheetName).Delete
     On Error GoTo 0
     Application.DisplayAlerts = True
-    
-    ' ★変更点: 現在アクティブなブックの先頭にシートを追加
+
     Set ws = ActiveWorkbook.Sheets.Add(Before:=ActiveWorkbook.Sheets(1))
     ws.Name = sheetName
-    
+
     ws.Cells(1, 1).Value = "名前"
     ws.Cells(1, 2).Value = "種類"
     ws.Cells(1, 1).Resize(1, 2).Font.Bold = True
 
-    '--- 3. FileSystemObjectを使用してファイルとフォルダの情報を取得 ---
+    '--- 4. FileSystemObjectを使用してファイルとフォルダの情報を取得 ---
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set targetFolder = fso.GetFolder(folderPath)
 
     rowNum = 2
 
-    '--- 4. フォルダの一覧を書き出す ---
+    '--- 5. フォルダの一覧を書き出す ---
     For Each subFolder In targetFolder.SubFolders
         ws.Cells(rowNum, 1).Value = subFolder.Name
         ws.Cells(rowNum, 2).Value = "フォルダ"
         rowNum = rowNum + 1
     Next subFolder
 
-    '--- 5. ファイルの一覧を書き出す（一時ファイルを除外） ---
+    '--- 6. ファイルの一覧を書き出す ---
     For Each file In targetFolder.Files
         If Left(file.Name, 2) <> "~$" Then
+            ' セルにファイル名を書き込む
             ws.Cells(rowNum, 1).Value = file.Name
             ws.Cells(rowNum, 2).Value = "ファイル"
+            
+            ' ★もしユーザーが「はい」を選んでいたら、ハイパーリンクを追加
+            If addHyperlinks Then
+                ws.Hyperlinks.Add Anchor:=ws.Cells(rowNum, 1), Address:=file.Path
+            End If
+            
             rowNum = rowNum + 1
         End If
     Next file
 
-    '--- 6. 後片付け ---
+    '--- 7. 後片付け ---
     ws.Columns("A:B").AutoFit
     Set fso = Nothing
     Set targetFolder = Nothing
@@ -73,7 +87,7 @@ Sub ListFilesAndFoldersInSelectedFolder_Final()
     Set file = Nothing
     Set ws = Nothing
 
-    '--- 7. 完了メッセージ ---
+    '--- 8. 完了メッセージ ---
     MsgBox "「" & sheetName & "」シートに一覧表示が完了しました。", vbInformation
 
 End Sub
