@@ -1,6 +1,6 @@
 Option Explicit
 
-Sub ListFilesAndFoldersInSelectedFolder_V4()
+Sub ListFilesAndFoldersInSelectedFolder_Final()
 
     '--- 変数の宣言 ---
     Dim folderPath As String
@@ -27,14 +27,16 @@ Sub ListFilesAndFoldersInSelectedFolder_V4()
         folderPath = .SelectedItems(1)
     End With
 
-    '--- 2. "ファイル一覧"シートの準備 ---
+    '--- 2. "ファイル一覧"シートの準備（アクティブなワークブックに対して実行）---
     Application.DisplayAlerts = False
     On Error Resume Next
-    ThisWorkbook.Sheets(sheetName).Delete
+    ' ★変更点: 現在アクティブなブックのシートを削除
+    ActiveWorkbook.Sheets(sheetName).Delete
     On Error GoTo 0
     Application.DisplayAlerts = True
     
-    Set ws = ThisWorkbook.Sheets.Add(Before:=ThisWorkbook.Sheets(1))
+    ' ★変更点: 現在アクティブなブックの先頭にシートを追加
+    Set ws = ActiveWorkbook.Sheets.Add(Before:=ActiveWorkbook.Sheets(1))
     ws.Name = sheetName
     
     ws.Cells(1, 1).Value = "名前"
@@ -56,7 +58,6 @@ Sub ListFilesAndFoldersInSelectedFolder_V4()
 
     '--- 5. ファイルの一覧を書き出す（一時ファイルを除外） ---
     For Each file In targetFolder.Files
-        ' ★ファイル名が "~$" で始まっていないかチェック
         If Left(file.Name, 2) <> "~$" Then
             ws.Cells(rowNum, 1).Value = file.Name
             ws.Cells(rowNum, 2).Value = "ファイル"
