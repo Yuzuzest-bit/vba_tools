@@ -94,7 +94,7 @@ Sub SelectFolder_Revised()
 End Sub
 
 ' ====================================================================================
-' サブプロシージャ：指定されたフォルダを再帰的に検索する
+' サブプロシージャ：指定されたフォルダを再帰的に検索する (★★修正箇所★★)
 ' ====================================================================================
 Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWords As Variant, ByRef resultSheet As Worksheet)
     Dim fso As Object, targetFolder As Object, subFolder As Object, file As Object
@@ -109,7 +109,8 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
     Application.StatusBar = "検索中: " & folderPath
 
     For Each file In targetFolder.Files
-        If LCase(fso.GetExtensionName(file.Name)) Like "xls*" Then
+        ' ▼▼▼ ここにファイル名が"~$"で始まらない条件を追加 ▼▼▼
+        If LCase(fso.GetExtensionName(file.Name)) Like "xls*" And Left(file.Name, 2) <> "~$" Then
             If file.Path <> ThisWorkbook.FullName Then
                 Set wb = Workbooks.Open(Filename:=file.Path, ReadOnly:=True, UpdateLinks:=0)
                 For Each ws In wb.Worksheets
@@ -147,4 +148,3 @@ ErrorHandler:
 CleanExit:
     Set fso = Nothing
 End Sub
-
