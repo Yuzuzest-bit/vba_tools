@@ -1,7 +1,7 @@
 Option Explicit
 
 ' ====================================================================================
-' メインプロシージャ：検索を実行する
+' メインプロシージャ：検索を実行する (UI改善版)
 ' ====================================================================================
 Sub SearchFiles_Revised()
     ' --- 変数宣言 ---
@@ -16,10 +16,17 @@ Sub SearchFiles_Revised()
     ' --- 初期設定 ---
     startTime = Timer
     Set settingSheet = ThisWorkbook.Sheets("設定")
+
+    ' ▼▼▼【改善点④】「検索結果」シートがなければ自動で作成する ▼▼▼
+    On Error Resume Next
     Set resultSheet = ThisWorkbook.Sheets("検索結果")
+    On Error GoTo 0
+    If resultSheet Is Nothing Then
+        Set resultSheet = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        resultSheet.Name = "検索結果"
+    End If
 
     ' --- 入力値の取得とチェック ---
-    ' 検索単語を取得 (A2:A10)
     For i = 2 To 10
         If Trim(settingSheet.Cells(i, "A").Value) <> "" Then
             searchWords.Add Trim(settingSheet.Cells(i, "A").Value)
@@ -30,7 +37,6 @@ Sub SearchFiles_Revised()
         Exit Sub
     End If
 
-    ' 検索フォルダを取得 (B2:B10)
     For i = 2 To 10
         If Trim(settingSheet.Cells(i, "B").Value) <> "" Then
             targetPaths.Add Trim(settingSheet.Cells(i, "B").Value)
@@ -44,11 +50,11 @@ Sub SearchFiles_Revised()
     ' --- 検索前処理 ---
     Application.ScreenUpdating = False
     Application.StatusBar = "検索準備中..."
-
-    ' 結果シートのクリアとヘッダー設定
     resultSheet.Cells.Clear
+
+    ' ▼▼▼【改善点①】ヘッダーの列順を変更 ▼▼▼
     With resultSheet.Range("A1:E1")
-        .Value = Array("ファイルパス", "ファイル名", "シート名", "アドレス", "セルの内容")
+        .Value = Array("セルの内容", "ファイルパス", "ファイル名", "シート名", "アドレス")
         .Font.Bold = True
         .Interior.Color = RGB(220, 230, 241)
     End With
@@ -60,8 +66,7 @@ Sub SearchFiles_Revised()
     For i = 1 To searchWords.Count
         wordsArray(i) = searchWords(i)
     Next i
-
-    ' 取得した各フォルダパスに対して検索を実行
+    
     Dim targetPath As Variant
     For Each targetPath In targetPaths
         If Not fso.FolderExists(targetPath) Then
@@ -72,11 +77,27 @@ Sub SearchFiles_Revised()
     Next targetPath
 
     ' --- 後処理 ---
-    resultSheet.Columns.AutoFit
+    Dim lastRow As Long
+    lastRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row
+    
+    ' 結果があれば書式を設定
+    If lastRow > 0 Then
+        resultSheet.Columns("A:E").AutoFit ' 先に列幅を調整
+        
+        ' ▼▼▼【改善点②】結果範囲に格子状の罫線を引く ▼▼▼
+        With resultSheet.Range("A1:E" & lastRow)
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+            .Borders.Color = vbBlack
+        End With
+    End If
+
     Set fso = Nothing
     Application.ScreenUpdating = True
     Application.StatusBar = False
 
+    ' ▼▼▼【改善点③】検索結果シートへ移動する ▼▼▼
+    resultSheet.Activate
     MsgBox "検索が完了しました。" & vbCrLf & "処理時間: " & Format(Timer - startTime, "0.00") & "秒", vbInformation, "完了"
 End Sub
 
@@ -94,7 +115,7 @@ Sub SelectFolder_Revised()
 End Sub
 
 ' ====================================================================================
-' サブプロシージャ：指定されたフォルダを再帰的に検索する (★★修正箇所★★)
+' サブプロシージャ：指定されたフォルダを再帰的に検索する
 ' ====================================================================================
 Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWords As Variant, ByRef resultSheet As Worksheet)
     Dim fso As Object, targetFolder As Object, subFolder As Object, file As Object
@@ -109,7 +130,6 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
     Application.StatusBar = "検索中: " & folderPath
 
     For Each file In targetFolder.Files
-        ' ▼▼▼ ここにファイル名が"~$"で始まらない条件を追加 ▼▼▼
         If LCase(fso.GetExtensionName(file.Name)) Like "xls*" And Left(file.Name, 2) <> "~$" Then
             If file.Path <> ThisWorkbook.FullName Then
                 Set wb = Workbooks.Open(Filename:=file.Path, ReadOnly:=True, UpdateLinks:=0)
@@ -119,12 +139,20 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
                         If Not foundCell Is Nothing Then
                             firstAddress = foundCell.Address
                             Do
-                                resultRow = resultSheet.Cells(resultSheet.Rows.Count, "E").End(xlUp).Row + 1
-                                resultSheet.Cells(resultRow, "A").Value = file.ParentFolder
-                                resultSheet.Cells(resultRow, "B").Value = file.Name
-                                resultSheet.Cells(resultRow, "C").Value = ws.Name
-                                resultSheet.Cells(resultRow, "D").Value = foundCell.Address(False, False)
-                                resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "E"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & foundCell.Address, TextToDisplay:=foundCell.Text
+                                ' ▼▼▼【改善点①】結果を書き込む列順を変更 ▼▼▼
+                                resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
+                                
+                                ' A列: セルの内容（ハイパーリンク付き）
+                                resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & foundCell.Address, TextToDisplay:=foundCell.Text
+                                ' B列: ファイルパス
+                                resultSheet.Cells(resultRow, "B").Value = file.ParentFolder
+                                ' C列: ファイル名
+                                resultSheet.Cells(resultRow, "C").Value = file.Name
+                                ' D列: シート名
+                                resultSheet.Cells(resultRow, "D").Value = ws.Name
+                                ' E列: アドレス
+                                resultSheet.Cells(resultRow, "E").Value = foundCell.Address(False, False)
+                                
                                 Set foundCell = ws.Cells.FindNext(foundCell)
                             Loop While Not foundCell Is Nothing And foundCell.Address <> firstAddress
                         End If
