@@ -79,7 +79,7 @@ Sub SearchFiles_Revised()
     Dim lastRow As Long
     lastRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row
     
-    If lastRow > 0 Then
+    If lastRow > 1 Then
         resultSheet.Columns("A:E").AutoFit
         With resultSheet.Range("A1:E" & lastRow)
             .Borders.LineStyle = xlContinuous
@@ -119,7 +119,6 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
     Dim resultRow As Long
     Dim displayText As String
 
-    ' メインのエラーハンドラ
     On Error GoTo ErrorHandler
 
     Set fso = CreateObject("Scripting.FileSystemObject")
@@ -148,7 +147,12 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
                                 resultSheet.Cells(resultRow, "C").Value = file.Name
                                 resultSheet.Cells(resultRow, "D").Value = ws.Name
                                 resultSheet.Cells(resultRow, "E").Value = foundCell.Address(False, False)
+                                
+                                ' ▼▼▼【最終改善】不安定なFindNextを局所的なエラーハンドラで保護 ▼▼▼
+                                On Error Resume Next
                                 Set foundCell = ws.Cells.FindNext(foundCell)
+                                On Error GoTo ErrorHandler ' メインのエラーハンドラに戻す
+                                
                             Loop While Not foundCell Is Nothing And foundCell.Address <> firstAddress
                         End If
                     Next searchWord
@@ -164,13 +168,10 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
     GoTo CleanExit
 
 ErrorHandler:
-    ' ▼▼▼【最終改善】このブロック内でクラッシュさせないための最終手段 ▼▼▼
-    ' wb.Closeでエラーが発生しても、強制的に無視して次に進む
     On Error Resume Next
     If Not wb Is Nothing Then
         wb.Close SaveChanges:=False
     End If
-    ' エラーハンドリングを元に戻す
     On Error GoTo 0
 
     Dim errorInfo As String
@@ -183,7 +184,6 @@ ErrorHandler:
     End If
     
     Debug.Print errorInfo
-    ' 元々エラーが発生した行の次から処理を再開
     Resume Next
 
 CleanExit:
