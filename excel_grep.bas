@@ -52,8 +52,9 @@ Sub SearchFiles_Revised()
     Application.StatusBar = "検索準備中..."
     resultSheet.Cells.Clear
 
+    ' ▼▼▼【修正点①】ヘッダーの並び順を変更 ▼▼▼
     With resultSheet.Range("A1:E1")
-        .Value = Array("セルの内容", "ファイルパス", "ファイル名", "シート名", "アドレス")
+        .Value = Array("セルの内容", "ファイル名", "シート名", "ファイルパス", "アドレス")
         .Font.Bold = True
         .Interior.Color = RGB(220, 230, 241)
     End With
@@ -80,7 +81,17 @@ Sub SearchFiles_Revised()
     lastRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row
     
     If lastRow > 1 Then
-        resultSheet.Columns("A:E").AutoFit
+        ' ▼▼▼【修正点②】A列の折り返し設定と、行の高さ自動調整を追加 ▼▼▼
+        ' A列を「折り返して全体を表示」に設定
+        resultSheet.Columns("A").WrapText = True
+        
+        ' 列の幅を自動調整
+        resultSheet.Columns("B:E").AutoFit
+        
+        ' 行の高さを自動調整
+        resultSheet.Rows.AutoFit
+        
+        ' 罫線を引く
         With resultSheet.Range("A1:E" & lastRow)
             .Borders.LineStyle = xlContinuous
             .Borders.Weight = xlThin
@@ -110,7 +121,7 @@ Sub SelectFolder_Revised()
 End Sub
 
 ' ====================================================================================
-' サブプロシージャ：指定されたフォルダを再帰的に検索する (★★検索ロジック変更★★)
+' サブプロシージャ：指定されたフォルダを再帰的に検索する
 ' ====================================================================================
 Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWords As Variant, ByRef resultSheet As Worksheet)
     Dim fso As Object, targetFolder As Object, subFolder As Object, file As Object
@@ -133,38 +144,34 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
                 Set wb = Workbooks.Open(Filename:=file.Path, ReadOnly:=True, UpdateLinks:=0)
                 For Each ws In wb.Worksheets
                     
-                    ' ▼▼▼【ロジック変更】ここからFind/FindNextを使わない安定な検索方法▼▼▼
-                    On Error Resume Next ' UsedRangeの取得エラーを無視
+                    On Error Resume Next
                     Set searchRange = ws.UsedRange
-                    On Error GoTo ErrorHandler ' エラーハンドラを元に戻す
+                    On Error GoTo ErrorHandler
 
                     If Not searchRange Is Nothing Then
-                        ' シート内の全セルを1つずつループ
                         For Each cell In searchRange.Cells
                             For Each searchWord In searchWords
-                                ' セルがエラーでなく、かつ検索単語が含まれているかチェック
                                 If Not IsError(cell.Value) Then
                                     If InStr(1, CStr(cell.Value), CStr(searchWord), vbTextCompare) > 0 Then
                                         
-                                        ' --- 発見した場合の処理 ---
                                         displayText = cell.Text
                                         resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
                                         
                                         resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & cell.Address, TextToDisplay:=displayText
-                                        resultSheet.Cells(resultRow, "B").Value = file.ParentFolder
-                                        resultSheet.Cells(resultRow, "C").Value = file.Name
-                                        resultSheet.Cells(resultRow, "D").Value = ws.Name
+                                        
+                                        ' ▼▼▼【修正点①】書き込む列の順序を変更 ▼▼▼
+                                        resultSheet.Cells(resultRow, "B").Value = file.Name         ' ファイル名
+                                        resultSheet.Cells(resultRow, "C").Value = ws.Name          ' シート名
+                                        resultSheet.Cells(resultRow, "D").Value = file.ParentFolder ' ファイルパス
+                                        
                                         resultSheet.Cells(resultRow, "E").Value = cell.Address(False, False)
                                         
-                                        ' 同じセルに複数の検索ワードがヒットしても1行だけ出力するため、
-                                        ' 内側のループ（単語ループ）を抜ける
                                         Exit For
                                     End If
                                 End If
                             Next searchWord
                         Next cell
                     End If
-                    ' ▲▲▲【ロジック変更】ここまで ▲▲▲
                     
                 Next ws
                 wb.Close SaveChanges:=False
