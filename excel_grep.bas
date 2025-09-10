@@ -110,14 +110,16 @@ Sub SelectFolder_Revised()
 End Sub
 
 ' ====================================================================================
-' サブプロシージャ：指定されたフォルダを再帰的に検索する (★★修正箇所★★)
+' サブプロシージャ：指定されたフォルダを再帰的に検索する (★★検索ロジック変更★★)
 ' ====================================================================================
 Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWords As Variant, ByRef resultSheet As Worksheet)
     Dim fso As Object, targetFolder As Object, subFolder As Object, file As Object
     Dim wb As Workbook, ws As Worksheet
-    Dim searchWord As Variant, foundCell As Range, firstAddress As String
+    Dim searchWord As Variant
     Dim resultRow As Long
     Dim displayText As String
+    Dim searchRange As Range
+    Dim cell As Range
 
     On Error GoTo ErrorHandler
 
@@ -130,32 +132,40 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
             If file.Path <> ThisWorkbook.FullName Then
                 Set wb = Workbooks.Open(Filename:=file.Path, ReadOnly:=True, UpdateLinks:=0)
                 For Each ws In wb.Worksheets
-                    For Each searchWord In searchWords
-                        Set foundCell = ws.Cells.Find(What:=searchWord, LookIn:=xlValues, LookAt:=xlPart, MatchCase:=False)
-                        If Not foundCell Is Nothing Then
-                            firstAddress = foundCell.Address
-                            Do
-                                If IsError(foundCell.Value) Then
-                                    displayText = "(エラーセル)"
-                                Else
-                                    displayText = foundCell.Text
+                    
+                    ' ▼▼▼【ロジック変更】ここからFind/FindNextを使わない安定な検索方法▼▼▼
+                    On Error Resume Next ' UsedRangeの取得エラーを無視
+                    Set searchRange = ws.UsedRange
+                    On Error GoTo ErrorHandler ' エラーハンドラを元に戻す
+
+                    If Not searchRange Is Nothing Then
+                        ' シート内の全セルを1つずつループ
+                        For Each cell In searchRange.Cells
+                            For Each searchWord In searchWords
+                                ' セルがエラーでなく、かつ検索単語が含まれているかチェック
+                                If Not IsError(cell.Value) Then
+                                    If InStr(1, CStr(cell.Value), CStr(searchWord), vbTextCompare) > 0 Then
+                                        
+                                        ' --- 発見した場合の処理 ---
+                                        displayText = cell.Text
+                                        resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
+                                        
+                                        resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & cell.Address, TextToDisplay:=displayText
+                                        resultSheet.Cells(resultRow, "B").Value = file.ParentFolder
+                                        resultSheet.Cells(resultRow, "C").Value = file.Name
+                                        resultSheet.Cells(resultRow, "D").Value = ws.Name
+                                        resultSheet.Cells(resultRow, "E").Value = cell.Address(False, False)
+                                        
+                                        ' 同じセルに複数の検索ワードがヒットしても1行だけ出力するため、
+                                        ' 内側のループ（単語ループ）を抜ける
+                                        Exit For
+                                    End If
                                 End If
-                                
-                                resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
-                                resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & foundCell.Address, TextToDisplay:=displayText
-                                resultSheet.Cells(resultRow, "B").Value = file.ParentFolder
-                                resultSheet.Cells(resultRow, "C").Value = file.Name
-                                resultSheet.Cells(resultRow, "D").Value = ws.Name
-                                resultSheet.Cells(resultRow, "E").Value = foundCell.Address(False, False)
-                                
-                                ' ▼▼▼【最終改善】不安定なFindNextを局所的なエラーハンドラで保護 ▼▼▼
-                                On Error Resume Next
-                                Set foundCell = ws.Cells.FindNext(foundCell)
-                                On Error GoTo ErrorHandler ' メインのエラーハンドラに戻す
-                                
-                            Loop While Not foundCell Is Nothing And foundCell.Address <> firstAddress
-                        End If
-                    Next searchWord
+                            Next searchWord
+                        Next cell
+                    End If
+                    ' ▲▲▲【ロジック変更】ここまで ▲▲▲
+                    
                 Next ws
                 wb.Close SaveChanges:=False
             End If
