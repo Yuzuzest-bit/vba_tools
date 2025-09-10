@@ -1,7 +1,7 @@
 Option Explicit
 
 ' ====================================================================================
-' メインプロシージャ：検索を実行する (UI改善版)
+' メインプロシージャ：検索を実行する
 ' ====================================================================================
 Sub SearchFiles_Revised()
     ' --- 変数宣言 ---
@@ -17,7 +17,7 @@ Sub SearchFiles_Revised()
     startTime = Timer
     Set settingSheet = ThisWorkbook.Sheets("設定")
 
-    ' ▼▼▼【改善点④】「検索結果」シートがなければ自動で作成する ▼▼▼
+    ' 「検索結果」シートがなければ自動で作成する
     On Error Resume Next
     Set resultSheet = ThisWorkbook.Sheets("検索結果")
     On Error GoTo 0
@@ -52,7 +52,6 @@ Sub SearchFiles_Revised()
     Application.StatusBar = "検索準備中..."
     resultSheet.Cells.Clear
 
-    ' ▼▼▼【改善点①】ヘッダーの列順を変更 ▼▼▼
     With resultSheet.Range("A1:E1")
         .Value = Array("セルの内容", "ファイルパス", "ファイル名", "シート名", "アドレス")
         .Font.Bold = True
@@ -80,11 +79,8 @@ Sub SearchFiles_Revised()
     Dim lastRow As Long
     lastRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row
     
-    ' 結果があれば書式を設定
     If lastRow > 0 Then
-        resultSheet.Columns("A:E").AutoFit ' 先に列幅を調整
-        
-        ' ▼▼▼【改善点②】結果範囲に格子状の罫線を引く ▼▼▼
+        resultSheet.Columns("A:E").AutoFit
         With resultSheet.Range("A1:E" & lastRow)
             .Borders.LineStyle = xlContinuous
             .Borders.Weight = xlThin
@@ -96,7 +92,6 @@ Sub SearchFiles_Revised()
     Application.ScreenUpdating = True
     Application.StatusBar = False
 
-    ' ▼▼▼【改善点③】検索結果シートへ移動する ▼▼▼
     resultSheet.Activate
     MsgBox "検索が完了しました。" & vbCrLf & "処理時間: " & Format(Timer - startTime, "0.00") & "秒", vbInformation, "完了"
 End Sub
@@ -115,7 +110,7 @@ Sub SelectFolder_Revised()
 End Sub
 
 ' ====================================================================================
-' サブプロシージャ：指定されたフォルダを再帰的に検索する
+' サブプロシージャ：指定されたフォルダを再帰的に検索する (★★修正箇所★★)
 ' ====================================================================================
 Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWords As Variant, ByRef resultSheet As Worksheet)
     Dim fso As Object, targetFolder As Object, subFolder As Object, file As Object
@@ -139,20 +134,12 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
                         If Not foundCell Is Nothing Then
                             firstAddress = foundCell.Address
                             Do
-                                ' ▼▼▼【改善点①】結果を書き込む列順を変更 ▼▼▼
                                 resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
-                                
-                                ' A列: セルの内容（ハイパーリンク付き）
                                 resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & foundCell.Address, TextToDisplay:=foundCell.Text
-                                ' B列: ファイルパス
                                 resultSheet.Cells(resultRow, "B").Value = file.ParentFolder
-                                ' C列: ファイル名
                                 resultSheet.Cells(resultRow, "C").Value = file.Name
-                                ' D列: シート名
-                                resultSheet.Cells(resultRow, "D").Value = ws.Name
-                                ' E列: アドレス
+                                resultSheet.Cells(resultSheet, "D").Value = ws.Name
                                 resultSheet.Cells(resultRow, "E").Value = foundCell.Address(False, False)
-                                
                                 Set foundCell = ws.Cells.FindNext(foundCell)
                             Loop While Not foundCell Is Nothing And foundCell.Address <> firstAddress
                         End If
@@ -168,9 +155,21 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
     Next subFolder
     GoTo CleanExit
 
+' ▼▼▼ エラーハンドラを修正 ▼▼▼
 ErrorHandler:
     If Not wb Is Nothing Then wb.Close SaveChanges:=False
-    Debug.Print "エラー発生 (スキップ): " & Err.Description & " | File: " & file.Path
+    
+    Dim errorInfo As String
+    errorInfo = "エラー発生 (スキップ): " & Err.Description
+    
+    ' fileオブジェクトが有効な場合のみ、ファイルパス情報を追加
+    If Not file Is Nothing Then
+        errorInfo = errorInfo & " | File: " & file.Path
+    Else
+        errorInfo = errorInfo & " | Folder: " & folderPath
+    End If
+    
+    Debug.Print errorInfo
     Resume Next
 
 CleanExit:
