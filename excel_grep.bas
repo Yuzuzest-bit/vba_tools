@@ -117,8 +117,9 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
     Dim wb As Workbook, ws As Worksheet
     Dim searchWord As Variant, foundCell As Range, firstAddress As String
     Dim resultRow As Long
-    Dim displayText As String ' 表示用の変数を追加
+    Dim displayText As String
 
+    ' メインのエラーハンドラ
     On Error GoTo ErrorHandler
 
     Set fso = CreateObject("Scripting.FileSystemObject")
@@ -135,7 +136,6 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
                         If Not foundCell Is Nothing Then
                             firstAddress = foundCell.Address
                             Do
-                                ' ▼▼▼【改善点】セルがエラーかどうかをチェック ▼▼▼
                                 If IsError(foundCell.Value) Then
                                     displayText = "(エラーセル)"
                                 Else
@@ -143,15 +143,11 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
                                 End If
                                 
                                 resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
-                                
-                                ' 安全なdisplayText変数を使ってハイパーリンクを作成
                                 resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & foundCell.Address, TextToDisplay:=displayText
-                                
                                 resultSheet.Cells(resultRow, "B").Value = file.ParentFolder
                                 resultSheet.Cells(resultRow, "C").Value = file.Name
                                 resultSheet.Cells(resultRow, "D").Value = ws.Name
                                 resultSheet.Cells(resultRow, "E").Value = foundCell.Address(False, False)
-                                
                                 Set foundCell = ws.Cells.FindNext(foundCell)
                             Loop While Not foundCell Is Nothing And foundCell.Address <> firstAddress
                         End If
@@ -168,8 +164,15 @@ Private Sub RecursiveSearch_Revised(ByVal folderPath As String, ByRef searchWord
     GoTo CleanExit
 
 ErrorHandler:
-    If Not wb Is Nothing Then wb.Close SaveChanges:=False
-    
+    ' ▼▼▼【最終改善】このブロック内でクラッシュさせないための最終手段 ▼▼▼
+    ' wb.Closeでエラーが発生しても、強制的に無視して次に進む
+    On Error Resume Next
+    If Not wb Is Nothing Then
+        wb.Close SaveChanges:=False
+    End If
+    ' エラーハンドリングを元に戻す
+    On Error GoTo 0
+
     Dim errorInfo As String
     errorInfo = "エラー発生 (スキップ): " & Err.Description
     
@@ -180,6 +183,7 @@ ErrorHandler:
     End If
     
     Debug.Print errorInfo
+    ' 元々エラーが発生した行の次から処理を再開
     Resume Next
 
 CleanExit:
