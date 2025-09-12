@@ -1,5 +1,3 @@
-Option Explicit
-
 ' ====================================================================================
 ' メインプロシージャ：シェイプテキストの検索を実行する
 ' ====================================================================================
@@ -41,7 +39,7 @@ Sub SearchShapesInFiles()
     Application.StatusBar = "検索準備中..."
     resultSheet.Cells.Clear
 
-    ' ▼▼▼【変更点①】ヘッダーに「場所 (セル)」を追加 ▼▼▼
+    ' ヘッダーに「場所 (セル)」を追加
     With resultSheet.Range("A1:F1")
         .Value = Array("シェイプのテキスト", "ファイル名", "シート名", "ファイルパス", "シェイプ名", "場所 (セル)")
         .Font.Bold = True
@@ -65,16 +63,27 @@ Sub SearchShapesInFiles()
     lastRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row
     
     If lastRow > 1 Then
-        resultSheet.Columns("A").WrapText = True
-        ' ▼▼▼【変更点②】列の自動調整の範囲をF列までに変更 ▼▼▼
-        resultSheet.Columns("B:F").AutoFit
-        resultSheet.Rows.AutoFit
+        ' ▼▼▼【ここから修正】レイアウト調整のロジックを変更 ▼▼▼
+
+        ' A列の書式設定
+        With resultSheet.Columns("A")
+            .WrapText = True      ' 1. まず「折り返して全体を表示」を有効にする
+            .ColumnWidth = 60     ' 2. 次に列の幅を広めの固定値（例: 60）に設定する
+        End With
         
+        ' B列からF列の幅は、データに合わせて自動調整
+        resultSheet.Columns("B:F").AutoFit
+        
+        ' すべての行の高さを、現在の列幅に合わせて自動調整
+        resultSheet.Rows.AutoFit
+
+        ' 罫線を引く
         With resultSheet.Range("A1:F" & lastRow)
             .Borders.LineStyle = xlContinuous
             .Borders.Weight = xlThin
             .Borders.Color = vbBlack
         End With
+        ' ▲▲▲【ここまで修正】▲▲▲
     End If
 
     Set fso = Nothing
@@ -84,196 +93,3 @@ Sub SearchShapesInFiles()
     resultSheet.Activate
     MsgBox "検索が完了しました。" & vbCrLf & "処理時間: " & Format(Timer - startTime, "0.00") & "秒", vbInformation, "完了"
 End Sub
-
-' ====================================================================================
-' サブプロシージャ：フォルダ選択ダイアログを表示
-' ====================================================================================
-Sub SelectFolder_ForShapeSearch()
-    With Application.FileDialog(msoFileDialogFolderPicker)
-        .Title = "検索対象のフォルダを選択してください（B2セルに入力されます）"
-        .AllowMultiSelect = False
-        If .Show = True Then
-            ThisWorkbook.Sheets("設定").Range("B2").Value = .SelectedItems(1)
-        End If
-    End With
-End Sub
-
-
-' ====================================================================================
-' サブプロシージャ：【再修正版】指定されたフォルダを再帰的に検索し、シェイプのテキストを抽出する
-' ====================================================================================
-Private Sub RecursiveShapeSearch(ByVal folderPath As String, ByRef resultSheet As Worksheet)
-    Dim fso As Object, targetFolder As Object, subFolder As Object, file As Object
-    Dim wb As Workbook, ws As Worksheet
-    Dim shp As Shape
-    Dim shapeText As String
-    Dim resultRow As Long
-    
-    ' ▼▼▼【変更点①】変数を追加 ▼▼▼
-    Dim targetCell As Range
-    Dim targetCellAddress As String
-
-    On Error GoTo ErrorHandler
-
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    Set targetFolder = fso.GetFolder(folderPath)
-    Application.StatusBar = "検索中: " & folderPath
-
-    For Each file In targetFolder.Files
-        If LCase(fso.GetExtensionName(file.Name)) Like "xls*" And Left(file.Name, 2) <> "~$" Then
-            If file.Path <> ThisWorkbook.FullName Then
-                Set wb = Workbooks.Open(Filename:=file.Path, ReadOnly:=True, UpdateLinks:=0)
-                
-                For Each ws In wb.Worksheets
-                    For Each shp In ws.Shapes
-                        shapeText = ""
-                        Set targetCell = Nothing ' ループの最初にリセット
-                        targetCellAddress = "A1"  ' デフォルト値をA1に設定
-                        
-                        Select Case shp.Type
-                            Case msoTextBox, msoAutoShape
-                                If shp.Type = msoTextBox Or (shp.Type = msoAutoShape And shp.AutoShapeType = msoShapeRectangle) Then
-                                    If shp.TextFrame2.HasText Then
-                                        shapeText = Trim(shp.TextFrame2.TextRange.Text)
-                                    End If
-                                End If
-                            Case msoOLEControlObject
-                                On Error Resume Next
-                                If TypeName(shp.OLEFormat.Object) = "TextBox" Then
-                                    shapeText = Trim(shp.OLEFormat.Object.Text)
-                                End If
-                                On Error GoTo ErrorHandler
-                            Case Else
-                        End Select
-                        
-                        If shapeText <> "" Then
-                            ' ▼▼▼【変更点②】より安全な方法でセルの位置情報を取得 ▼▼▼
-                            On Error Resume Next ' 位置情報取得でエラーが出ても無視する
-                            Set targetCell = shp.TopLeftCell
-                            If Not targetCell Is Nothing Then
-                                targetCellAddress = targetCell.Address
-                            End If
-                            On Error GoTo ErrorHandler ' エラーハンドリングを元に戻す
-
-                            resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
-                            
-                            ' 取得したセルアドレス（失敗した場合は"A1"）を使ってハイパーリンクを作成
-                            resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & targetCellAddress, TextToDisplay:=shapeText
-                            
-                            resultSheet.Cells(resultRow, "B").Value = file.Name
-                            resultSheet.Cells(resultRow, "C").Value = ws.Name
-                            resultSheet.Cells(resultRow, "D").Value = file.ParentFolder
-                            resultSheet.Cells(resultRow, "E").Value = shp.Name
-                            resultSheet.Cells(resultRow, "F").Value = targetCellAddress ' F列にもアドレスを書き出す
-                        End If
-                    Next shp
-                Next ws
-                
-                wb.Close SaveChanges:=False
-            End If
-        End If
-    Next file
-
-    For Each subFolder In targetFolder.SubFolders
-        Call RecursiveShapeSearch(subFolder.Path, resultSheet)
-    Next subFolder
-    GoTo CleanExit
-
-ErrorHandler:
-    On Error Resume Next
-    If Not wb Is Nothing Then
-        wb.Close SaveChanges:=False
-    End If
-    On Error GoTo 0
-
-    Dim errorInfo As String
-    errorInfo = "エラー発生 (スキップ): " & Err.Description
-    
-    If Not file Is Nothing Then
-        errorInfo = errorInfo & " | File: " & file.Path
-    Else
-        errorInfo = errorInfo & " | Folder: " & folderPath
-    End If
-    
-    Debug.Print errorInfo
-    Resume Next
-
-CleanExit:
-    Set fso = Nothing
-End Sub
-
-
-
-
-' ====================================================================================
-' ◆◆◆ 問題のオブジェクトの種類を特定するための診断用マクロ ◆◆◆
-' ====================================================================================
-Sub DiagnoseShapes()
-    Dim targetFile As Variant
-    Dim wb As Workbook
-    Dim ws As Worksheet
-    Dim shp As Shape
-    Dim i As Long
-    Dim objectTypeName As String
-    Dim extractedText As String
-
-    ' --- ① ファイル選択ダイアログを表示 ---
-    targetFile = Application.GetOpenFilename("Excel ファイル (*.xls*),*.xls*", , "テキストを抽出したいファイルを1つ選択してください")
-    If targetFile = False Then
-        MsgBox "キャンセルされました。"
-        Exit Sub
-    End If
-
-    ' --- ② VBAエディタのイミディエイトウィンドウをクリア ---
-    On Error Resume Next
-    VBE.ActiveWindow.Visible = True ' VBEウィンドウを念のため表示
-    On Error GoTo 0
-    Debug.Print "--- 診断開始：" & CStr(Now) & " ---"
-    Debug.Print "対象ファイル: " & targetFile
-    Debug.Print "--------------------------------------------------"
-
-    ' --- ③ ファイルを開いてシェイプを調査 ---
-    Application.ScreenUpdating = False
-    Set wb = Workbooks.Open(Filename:=targetFile, ReadOnly:=True, UpdateLinks:=0)
-
-    For Each ws In wb.Worksheets
-        If ws.Shapes.Count > 0 Then
-            Debug.Print vbCrLf & "■■■ シート名: " & ws.Name & " ■■■"
-            For Each shp In ws.Shapes
-                ' --- オブジェクトの種類を日本語に変換 ---
-                Select Case shp.Type
-                    Case 1: objectTypeName = "図形 (msoAutoShape)"
-                    Case 8: objectTypeName = "フォームコントロール (msoFormControl)"
-                    Case 12: objectTypeName = "ActiveXコントロール (msoOLEControlObject)"
-                    Case 17: objectTypeName = "テキストボックス (msoTextBox)"
-                    Case 13: objectTypeName = "画像 (msoPicture)"
-                    Case 6: objectTypeName = "グループ化された図形 (msoGroup)"
-                    Case Else: objectTypeName = "その他の種類 (" & shp.Type & ")"
-                End Select
-                
-                ' --- テキストを様々な方法で取得試行 ---
-                extractedText = "(テキスト取得できず)"
-                On Error Resume Next ' エラーを無視して試行
-                If shp.TextFrame2.HasText Then extractedText = shp.TextFrame2.TextRange.Text
-                If Len(extractedText) < 2 Then ' まだ取れてなければ次を試す
-                    extractedText = shp.TextFrame.Characters.Text
-                End If
-                If Len(extractedText) < 2 Then ' まだ取れてなければ次を試す
-                    extractedText = shp.OLEFormat.Object.Text
-                End If
-                On Error GoTo 0
-                
-                ' --- 結果をイミディエイトウィンドウに出力 ---
-                Debug.Print "オブジェクト名: " & shp.Name & vbTab & "種類: " & objectTypeName & vbTab & "テキスト: [" & Trim(extractedText) & "]"
-            Next shp
-        End If
-    Next ws
-
-    wb.Close SaveChanges:=False
-    Application.ScreenUpdating = True
-
-    MsgBox "診断が完了しました。" & vbCrLf & "VBAエディタの「イミディエイトウィンドウ」に結果が出力されていますので、その内容をコピーしてご返信ください。", vbInformation, "診断完了"
-End Sub
-
-
-
