@@ -41,7 +41,7 @@ Sub SearchShapesInFiles()
     Application.StatusBar = "検索準備中..."
     resultSheet.Cells.Clear
 
-    ' ▼▼▼【変更点①】ヘッダーをシェイプ検索用に変更 ▼▼▼
+    ' ヘッダーをシェイプ検索用に変更
     With resultSheet.Range("A1:E1")
         .Value = Array("シェイプのテキスト", "ファイル名", "シート名", "ファイルパス", "シェイプ名")
         .Font.Bold = True
@@ -56,7 +56,6 @@ Sub SearchShapesInFiles()
         If Not fso.FolderExists(targetPath) Then
             MsgBox "指定されたフォルダが見つかりません (スキップします): " & vbCrLf & targetPath, vbExclamation, "フォルダエラー"
         Else
-            ' ▼▼▼【変更点②】呼び出すサブプロシージャをシェイプ検索用のものに変更 ▼▼▼
             Call RecursiveShapeSearch(CStr(targetPath), resultSheet)
         End If
     Next targetPath
@@ -68,13 +67,10 @@ Sub SearchShapesInFiles()
     If lastRow > 1 Then
         ' A列を「折り返して全体を表示」に設定
         resultSheet.Columns("A").WrapText = True
-        
         ' 列の幅を自動調整
         resultSheet.Columns("B:E").AutoFit
-        
         ' 行の高さを自動調整
         resultSheet.Rows.AutoFit
-        
         ' 罫線を引く
         With resultSheet.Range("A1:E" & lastRow)
             .Borders.LineStyle = xlContinuous
@@ -92,7 +88,7 @@ Sub SearchShapesInFiles()
 End Sub
 
 ' ====================================================================================
-' サブプロシージャ：フォルダ選択ダイアログを表示（元のまま）
+' サブプロシージャ：フォルダ選択ダイアログを表示
 ' ====================================================================================
 Sub SelectFolder_ForShapeSearch()
     With Application.FileDialog(msoFileDialogFolderPicker)
@@ -126,10 +122,10 @@ Private Sub RecursiveShapeSearch(ByVal folderPath As String, ByRef resultSheet A
                 Set wb = Workbooks.Open(Filename:=file.Path, ReadOnly:=True, UpdateLinks:=0)
                 
                 For Each ws In wb.Worksheets
-                    ' ▼▼▼【変更点③】シート内の全シェイプをループする処理に変更 ▼▼▼
                     For Each shp In ws.Shapes
-                        ' 四角形(msoShapeRectangle)タイプのシェイプのみを対象とする
-                        If shp.Type = msoAutoShape And shp.AutoShapeType = msoShapeRectangle Then
+                        ' ▼▼▼【ここを修正！】テキストボックス(msoTextBox) もしくは 長方形(msoShapeRectangle)を対象にする ▼▼▼
+                        If shp.Type = msoTextBox Or (shp.Type = msoAutoShape And shp.AutoShapeType = msoShapeRectangle) Then
+                            
                             ' シェイプにテキストが存在するかチェック
                             If shp.TextFrame2.HasText Then
                                 shapeText = Trim(shp.TextFrame2.TextRange.Text)
@@ -138,7 +134,7 @@ Private Sub RecursiveShapeSearch(ByVal folderPath As String, ByRef resultSheet A
                                 If shapeText <> "" Then
                                     resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
                                     
-                                    ' ハイパーリンクを作成（注：シェイプ自体への直接リンクはできないため、シートを開くリンクになります）
+                                    ' ハイパーリンクを作成
                                     resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!A1", TextToDisplay:=shapeText
                                     
                                     ' 各情報を書き込む
