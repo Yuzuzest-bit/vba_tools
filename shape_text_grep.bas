@@ -98,8 +98,9 @@ Sub SelectFolder_ForShapeSearch()
     End With
 End Sub
 
+
 ' ====================================================================================
-' サブプロシージャ：【改良版】指定されたフォルダを再帰的に検索し、シェイプのテキストを抽出する
+' サブプロシージャ：【再修正版】指定されたフォルダを再帰的に検索し、シェイプのテキストを抽出する
 ' ====================================================================================
 Private Sub RecursiveShapeSearch(ByVal folderPath As String, ByRef resultSheet As Worksheet)
     Dim fso As Object, targetFolder As Object, subFolder As Object, file As Object
@@ -107,6 +108,9 @@ Private Sub RecursiveShapeSearch(ByVal folderPath As String, ByRef resultSheet A
     Dim shp As Shape
     Dim shapeText As String
     Dim resultRow As Long
+    
+    ' ▼▼▼【変更点①】変数を追加 ▼▼▼
+    Dim targetCell As Range
     Dim targetCellAddress As String
 
     On Error GoTo ErrorHandler
@@ -123,6 +127,8 @@ Private Sub RecursiveShapeSearch(ByVal folderPath As String, ByRef resultSheet A
                 For Each ws In wb.Worksheets
                     For Each shp In ws.Shapes
                         shapeText = ""
+                        Set targetCell = Nothing ' ループの最初にリセット
+                        targetCellAddress = "A1"  ' デフォルト値をA1に設定
                         
                         Select Case shp.Type
                             Case msoTextBox, msoAutoShape
@@ -141,20 +147,24 @@ Private Sub RecursiveShapeSearch(ByVal folderPath As String, ByRef resultSheet A
                         End Select
                         
                         If shapeText <> "" Then
+                            ' ▼▼▼【変更点②】より安全な方法でセルの位置情報を取得 ▼▼▼
+                            On Error Resume Next ' 位置情報取得でエラーが出ても無視する
+                            Set targetCell = shp.TopLeftCell
+                            If Not targetCell Is Nothing Then
+                                targetCellAddress = targetCell.Address
+                            End If
+                            On Error GoTo ErrorHandler ' エラーハンドリングを元に戻す
+
                             resultRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
                             
-                            ' ▼▼▼【変更点③】シェイプの左上にあるセルのアドレスを取得 ▼▼▼
-                            targetCellAddress = shp.TopLeftCell.Address
-                            
-                            ' ▼▼▼【変更点④】ハイパーリンクのSubAddressに取得したセルアドレスを指定 ▼▼▼
+                            ' 取得したセルアドレス（失敗した場合は"A1"）を使ってハイパーリンクを作成
                             resultSheet.Hyperlinks.Add Anchor:=resultSheet.Cells(resultRow, "A"), Address:=file.Path, SubAddress:="'" & ws.Name & "'!" & targetCellAddress, TextToDisplay:=shapeText
                             
                             resultSheet.Cells(resultRow, "B").Value = file.Name
                             resultSheet.Cells(resultRow, "C").Value = ws.Name
                             resultSheet.Cells(resultRow, "D").Value = file.ParentFolder
                             resultSheet.Cells(resultRow, "E").Value = shp.Name
-                            ' ▼▼▼【変更点⑤】新しいF列に場所（セル）を書き出す ▼▼▼
-                            resultSheet.Cells(resultRow, "F").Value = targetCellAddress
+                            resultSheet.Cells(resultRow, "F").Value = targetCellAddress ' F列にもアドレスを書き出す
                         End If
                     Next shp
                 Next ws
@@ -191,3 +201,4 @@ ErrorHandler:
 CleanExit:
     Set fso = Nothing
 End Sub
+
