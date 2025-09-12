@@ -202,3 +202,78 @@ CleanExit:
     Set fso = Nothing
 End Sub
 
+
+
+
+' ====================================================================================
+' ◆◆◆ 問題のオブジェクトの種類を特定するための診断用マクロ ◆◆◆
+' ====================================================================================
+Sub DiagnoseShapes()
+    Dim targetFile As Variant
+    Dim wb As Workbook
+    Dim ws As Worksheet
+    Dim shp As Shape
+    Dim i As Long
+    Dim objectTypeName As String
+    Dim extractedText As String
+
+    ' --- ① ファイル選択ダイアログを表示 ---
+    targetFile = Application.GetOpenFilename("Excel ファイル (*.xls*),*.xls*", , "テキストを抽出したいファイルを1つ選択してください")
+    If targetFile = False Then
+        MsgBox "キャンセルされました。"
+        Exit Sub
+    End If
+
+    ' --- ② VBAエディタのイミディエイトウィンドウをクリア ---
+    On Error Resume Next
+    VBE.ActiveWindow.Visible = True ' VBEウィンドウを念のため表示
+    On Error GoTo 0
+    Debug.Print "--- 診断開始：" & CStr(Now) & " ---"
+    Debug.Print "対象ファイル: " & targetFile
+    Debug.Print "--------------------------------------------------"
+
+    ' --- ③ ファイルを開いてシェイプを調査 ---
+    Application.ScreenUpdating = False
+    Set wb = Workbooks.Open(Filename:=targetFile, ReadOnly:=True, UpdateLinks:=0)
+
+    For Each ws In wb.Worksheets
+        If ws.Shapes.Count > 0 Then
+            Debug.Print vbCrLf & "■■■ シート名: " & ws.Name & " ■■■"
+            For Each shp In ws.Shapes
+                ' --- オブジェクトの種類を日本語に変換 ---
+                Select Case shp.Type
+                    Case 1: objectTypeName = "図形 (msoAutoShape)"
+                    Case 8: objectTypeName = "フォームコントロール (msoFormControl)"
+                    Case 12: objectTypeName = "ActiveXコントロール (msoOLEControlObject)"
+                    Case 17: objectTypeName = "テキストボックス (msoTextBox)"
+                    Case 13: objectTypeName = "画像 (msoPicture)"
+                    Case 6: objectTypeName = "グループ化された図形 (msoGroup)"
+                    Case Else: objectTypeName = "その他の種類 (" & shp.Type & ")"
+                End Select
+                
+                ' --- テキストを様々な方法で取得試行 ---
+                extractedText = "(テキスト取得できず)"
+                On Error Resume Next ' エラーを無視して試行
+                If shp.TextFrame2.HasText Then extractedText = shp.TextFrame2.TextRange.Text
+                If Len(extractedText) < 2 Then ' まだ取れてなければ次を試す
+                    extractedText = shp.TextFrame.Characters.Text
+                End If
+                If Len(extractedText) < 2 Then ' まだ取れてなければ次を試す
+                    extractedText = shp.OLEFormat.Object.Text
+                End If
+                On Error GoTo 0
+                
+                ' --- 結果をイミディエイトウィンドウに出力 ---
+                Debug.Print "オブジェクト名: " & shp.Name & vbTab & "種類: " & objectTypeName & vbTab & "テキスト: [" & Trim(extractedText) & "]"
+            Next shp
+        End If
+    Next ws
+
+    wb.Close SaveChanges:=False
+    Application.ScreenUpdating = True
+
+    MsgBox "診断が完了しました。" & vbCrLf & "VBAエディタの「イミディエイトウィンドウ」に結果が出力されていますので、その内容をコピーしてご返信ください。", vbInformation, "診断完了"
+End Sub
+
+
+
