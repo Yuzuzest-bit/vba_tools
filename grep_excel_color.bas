@@ -1,28 +1,28 @@
 ' ====================================================================================
-' 実行用マクロ：ユーザーに入力を促し、色検索を実行する
+' 実行用マクロ：ユーザーに入力を促し、セルの書式（色）検索を実行する
 ' ====================================================================================
-Sub RunColorSearch()
+Sub RunCellFormatSearch()
     Dim hexColor As String
     Dim searchTarget As String
     
     ' 1. 検索する色をユーザーから取得
-    hexColor = InputBox("検索する色を #FFFFFF の形式で入力してください。", "色の指定", "#FF0000")
+    hexColor = InputBox("検索する色を #FFFFFF の形式で入力してください。", "色の指定", "#FFFF00")
     If hexColor = "" Then Exit Sub ' キャンセルされた場合
     
     ' 2. 検索対象をユーザーから取得
     searchTarget = InputBox("検索対象を入力してください。" & vbCrLf & _
-                            " (Fill, Line, または Font)", "検索対象の指定", "Fill")
+                            " (背景色 または フォント色)", "検索対象の指定", "背景色")
     If searchTarget = "" Then Exit Sub ' キャンセルされた場合
     
     ' 3. メインの検索プロシージャを呼び出し
-    Call SearchShapesByColor(hexColor, searchTarget)
+    Call SearchCellsByColor(hexColor, searchTarget)
 End Sub
 
 
 ' ====================================================================================
-' メインプロシージャ：指定された色を持つシェイプを検索する
+' メインプロシージャ：指定された色を持つセルを検索する
 ' ====================================================================================
-Sub SearchShapesByColor(ByVal searchHexColor As String, ByVal searchTarget As String)
+Sub SearchCellsByColor(ByVal searchHexColor As String, ByVal searchTarget As String)
     ' --- 変数宣言 ---
     Dim settingSheet As Worksheet
     Dim resultSheet As Worksheet
@@ -30,7 +30,8 @@ Sub SearchShapesByColor(ByVal searchHexColor As String, ByVal searchTarget As St
     Dim fso As Object
     Dim startTime As Double
     Dim i As Long
-    Dim searchColor As Long ' Long値に変換された検索色
+    Dim searchColor As Long
+    Dim targetType As String
 
     ' --- 初期設定 ---
     startTime = Timer
@@ -43,16 +44,18 @@ Sub SearchShapesByColor(ByVal searchHexColor As String, ByVal searchTarget As St
         Exit Sub
     End If
     
-    Select Case LCase(Trim(searchTarget))
-        Case "fill", "line", "font"
-            ' OK
+    Select Case Trim(searchTarget)
+        Case "背景色"
+            targetType = "Interior"
+        Case "フォント色"
+            targetType = "Font"
         Case Else
-            MsgBox "検索対象の指定が正しくありません。'Fill', 'Line', 'Font' のいずれかを指定してください。", vbExclamation, "入力エラー"
+            MsgBox "検索対象の指定が正しくありません。'背景色' または 'フォント色' を指定してください。", vbExclamation, "入力エラー"
             Exit Sub
     End Select
     
     ' --- 検索対象フォルダの取得 ---
-    For i = 2 To 10 ' B2からB10セルまで
+    For i = 2 To 10
         If Trim(settingSheet.Cells(i, "B").Value) <> "" Then
             targetPaths.Add Trim(settingSheet.Cells(i, "B").Value)
         End If
@@ -77,7 +80,7 @@ Sub SearchShapesByColor(ByVal searchHexColor As String, ByVal searchTarget As St
 
     ' ヘッダーを設定
     With resultSheet.Range("A1:H1")
-        .Value = Array("シェイプのテキスト", "ファイル名", "シート名", "ファイルパス", "シェイプ名", "場所 (セル)", "検索対象", "色 (Hex)")
+        .Value = Array("セルの値", "ファイル名", "シート名", "セル番地", "検索対象", "色 (Hex)", "ファイルパス", "場所へジャンプ")
         .Font.Bold = True
         .Interior.Color = RGB(220, 230, 241)
     End With
@@ -89,7 +92,7 @@ Sub SearchShapesByColor(ByVal searchHexColor As String, ByVal searchTarget As St
         If Not fso.FolderExists(targetPath) Then
             MsgBox "指定されたフォルダが見つかりません (スキップします): " & vbCrLf & targetPath, vbExclamation, "フォルダエラー"
         Else
-            Call RecursiveShapeSearchByColor(CStr(targetPath), resultSheet, searchColor, LCase(Trim(searchTarget)))
+            Call RecursiveCellSearchByColor(CStr(targetPath), resultSheet, searchColor, targetType)
         End If
     Next targetPath
 
@@ -98,11 +101,7 @@ Sub SearchShapesByColor(ByVal searchHexColor As String, ByVal searchTarget As St
     lastRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row
     
     If lastRow > 1 Then
-        ' レイアウト調整
-        resultSheet.Columns("A").ColumnWidth = 50
-        resultSheet.Columns("A").WrapText = True
-        resultSheet.Columns("B:H").AutoFit
-        resultSheet.Rows.AutoFit
+        resultSheet.Columns("A:H").AutoFit
         With resultSheet.Range("A1:H" & lastRow)
             .Borders.LineStyle = xlContinuous
             .Borders.Weight = xlThin
@@ -119,16 +118,16 @@ End Sub
 
 
 ' ====================================================================================
-' 再帰検索プロシージャ：ファイルとフォルダを再帰的に探索し、シェイプの色をチェック
+' 再帰検索プロシージャ：ファイルとフォルダを再帰的に探索し、セルの色をチェック
 ' ====================================================================================
-Private Sub RecursiveShapeSearchByColor(ByVal targetFolderPath As String, ByVal resultSheet As Worksheet, _
-                                        ByVal searchColor As Long, ByVal searchTarget As String)
+Private Sub RecursiveCellSearchByColor(ByVal targetFolderPath As String, ByVal resultSheet As Worksheet, _
+                                        ByVal searchColor As Long, ByVal targetType As String)
     Dim fso As Object, targetFolder As Object, file As Object, subFolder As Object
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set targetFolder = fso.GetFolder(targetFolderPath)
     
-    Dim wb As Workbook, ws As Worksheet, shp As Shape
-    Dim nextRow As Long, found As Boolean
+    Dim wb As Workbook, ws As Worksheet, cell As Range
+    Dim nextRow As Long
 
     On Error GoTo ErrorHandler
 
@@ -138,41 +137,37 @@ Private Sub RecursiveShapeSearchByColor(ByVal targetFolderPath As String, ByVal 
         If Not file.Name Like "~$*" And LCase(fso.GetExtensionName(file.Path)) Like "xls*" Then
             Set wb = Workbooks.Open(file.Path, ReadOnly:=True, UpdateLinks:=0)
             For Each ws In wb.Worksheets
-                For Each shp In ws.Shapes
-                    found = False ' シェイプごとにリセット
-                    
-                    Select Case searchTarget
-                        Case "fill" ' 塗りつぶしの色
-                            If shp.Fill.Visible = msoTrue And shp.Fill.Type = msoFillSolid Then
-                                If shp.Fill.ForeColor.RGB = searchColor Then found = True
-                            End If
-                        Case "line" ' 線の色
-                            If shp.Line.Visible = msoTrue Then
-                                If shp.Line.ForeColor.RGB = searchColor Then found = True
-                            End If
-                        Case "font" ' 文字の色
-                            If shp.HasTextFrame And shp.TextFrame2.HasText Then
-                                ' TextFrame内の最初の文字の色を代表としてチェック
-                                If shp.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = searchColor Then
-                                    found = True
-                                End If
-                            End If
-                    End Select
-                    
-                    If found Then
-                        nextRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
-                        With resultSheet
-                            .Cells(nextRow, "A").Value = shp.TextFrame2.TextRange.Text
-                            .Cells(nextRow, "B").Value = wb.Name
-                            .Cells(nextRow, "C").Value = ws.Name
-                            .Cells(nextRow, "D").Value = wb.FullName
-                            .Cells(nextRow, "E").Value = shp.Name
-                            .Cells(nextRow, "F").Value = shp.TopLeftCell.Address(False, False)
-                            .Cells(nextRow, "G").Value = searchTarget
-                            .Cells(nextRow, "H").Value = RGBToHex(searchColor)
-                        End With
-                    End If
-                Next shp
+                If ws.UsedRange.Cells.Count > 1 Or ws.UsedRange.Value <> "" Then 'シートにデータがある場合のみ実行
+                    ' データが存在するセル範囲をループ
+                    For Each cell In ws.UsedRange
+                        Dim found As Boolean
+                        found = False
+                        
+                        If targetType = "Interior" Then
+                            ' 背景色のチェック
+                            If cell.Interior.Color = searchColor Then found = True
+                        ElseIf targetType = "Font" Then
+                            ' フォント色のチェック
+                            If cell.Font.Color = searchColor Then found = True
+                        End If
+                        
+                        If found Then
+                            ' 結果をシートに書き込む
+                            nextRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
+                            With resultSheet
+                                .Cells(nextRow, "A").Value = cell.Value
+                                .Cells(nextRow, "B").Value = wb.Name
+                                .Cells(nextRow, "C").Value = ws.Name
+                                .Cells(nextRow, "D").Value = cell.Address(False, False)
+                                .Cells(nextRow, "E").Value = IIf(targetType = "Interior", "背景色", "フォント色")
+                                .Cells(nextRow, "F").Value = RGBToHex(searchColor)
+                                .Cells(nextRow, "G").Value = wb.FullName
+                                ' ハイパーリンクを作成
+                                .Cells(nextRow, "H").Formula = "=HYPERLINK(""[" & wb.FullName & "]'" & ws.Name & "'!" & cell.Address & """, ""ジャンプ"")"
+                            End With
+                        End If
+                    Next cell
+                End If
             Next ws
             wb.Close SaveChanges:=False
             Set wb = Nothing
@@ -181,7 +176,7 @@ Private Sub RecursiveShapeSearchByColor(ByVal targetFolderPath As String, ByVal 
 
     ' --- サブフォルダを再帰的に検索 ---
     For Each subFolder In targetFolder.SubFolders
-        Call RecursiveShapeSearchByColor(subFolder.Path, resultSheet, searchColor, searchTarget)
+        Call RecursiveCellSearchByColor(subFolder.Path, resultSheet, searchColor, targetType)
     Next subFolder
 
 ErrorHandler:
@@ -193,8 +188,6 @@ End Sub
 ' ====================================================================================
 ' ヘルパー関数群
 ' ====================================================================================
-
-' #RRGGBB 形式の16進数カラーコードをVBAのLong値に変換する関数
 Private Function HexToRGB(ByVal hexColor As String) As Long
     On Error GoTo ErrorHandler
     Dim colorString As String
@@ -208,10 +201,9 @@ Private Function HexToRGB(ByVal hexColor As String) As Long
     HexToRGB = RGB(R, G, B)
     Exit Function
 ErrorHandler:
-    HexToRGB = -1 ' エラー時は-1を返す
+    HexToRGB = -1
 End Function
 
-' VBAのLong値を #RRGGBB 形式の文字列に変換する関数 (結果表示用)
 Private Function RGBToHex(ByVal rgbColor As Long) As String
     Dim R As String, G As String, B As String
     R = Hex(rgbColor And &HFF)
