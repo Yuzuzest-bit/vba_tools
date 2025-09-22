@@ -1,48 +1,99 @@
 ' ====================================================================================
-' メインプロシージャ：選択中セルの色を16進数カラーコードで取得し、表示する (修正版)
+' 1. 選択セルのカラーコードを取得する
 ' ====================================================================================
 Sub GetSelectedCellColor()
     Dim targetCell As Range
     Dim colorCode As String
     
-    ' --- 選択されているのがセル（Rangeオブジェクト）かを確認 ---
     If TypeName(Selection) <> "Range" Then
         MsgBox "セルを選択してから実行してください。", vbInformation, "情報"
         Exit Sub
     End If
     
-    ' --- 選択範囲の左上のセルを対象とする ---
     Set targetCell = Selection.Cells(1, 1)
     
-    ' --- 色を取得し、16進数文字列に変換 ---
-    ' ▼▼▼【修正点】「.Interior.Color」から「.DisplayFormat.Interior.Color」に変更 ▼▼▼
-    ' これで、条件付き書式を含む「見たままの色」を取得できるようになります。
+    ' DisplayFormatを使って「見たままの色」のカラーコードを取得
     colorCode = ConvertToHex(targetCell.DisplayFormat.Interior.Color)
-    ' ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
     
-    ' --- InputBoxで結果を表示（コピー可能な形式） ---
     InputBox "選択セルのカラーコード:", "カラーコード取得", colorCode
-
 End Sub
 
 
 ' ====================================================================================
-' ヘルパー関数：VBAのColor値(Long)を #RRGGBB 形式の文字列に変換する
-' (この関数は元々正しく作られているため、修正不要です)
+' 2. 指定した16進数カラーコードで、選択セルの色を塗る
 ' ====================================================================================
-Private Function ConvertToHex(ByVal rgbColor As Long) As String
+Sub SetCellColorByHex()
+    Dim hexColor As String
+    Dim targetColor As Long
+    
+    If TypeName(Selection) <> "Range" Then
+        MsgBox "色を塗るセルを選択してから実行してください。", vbInformation, "情報"
+        Exit Sub
+    End If
+    
+    ' --- ユーザーから16進数カラーコードを入力してもらう ---
+    hexColor = InputBox("塗る色を #FFFFFF の形式で入力してください。", "色の指定")
+    If hexColor = "" Then Exit Sub ' キャンセルされたら終了
+    
+    ' --- 入力された16進コードをVBAが理解できる数値(Long)に変換 ---
+    targetColor = ConvertToRGB(hexColor)
+    
+    ' --- 変換に失敗した場合はエラーメッセージを表示 ---
+    If targetColor = -1 Then
+        MsgBox "色の指定が正しくありません。'#FFFFFF' の形式で入力してください。", vbExclamation, "入力エラー"
+        Exit Sub
+    End If
+    
+    ' --- 選択されているすべてのセルの背景色を変更 ---
+    Selection.Interior.Color = targetColor
+    
+End Sub
+
+
+
+
+' ====================================================================================
+' 共通ヘルパー関数群 (コードの一番下に記述)
+' ====================================================================================
+
+' 関数A：VBAのColor値(Long)を #RRGGBB 形式の文字列に変換する
+Private Function ConvertToHex(ByVal vbaColor As Long) As String
     Dim R As String, G As String, B As String
     
-    ' Long値からR, G, Bの各要素を抽出
-    R = Hex(rgbColor And &HFF)
-    G = Hex((rgbColor \ 256) And &HFF)
-    B = Hex((rgbColor \ 65536) And &HFF)
+    R = Hex(vbaColor And &HFF)
+    G = Hex((vbaColor \ 256) And &HFF)
+    B = Hex((vbaColor \ 65536) And &HFF)
     
-    ' 各要素が1桁の場合は左に "0" を追加して2桁にする
     If Len(R) = 1 Then R = "0" & R
     If Len(G) = 1 Then G = "0" & G
     If Len(B) = 1 Then B = "0" & B
     
-    ' "#" を先頭につけて #RRGGBB 形式で返す
     ConvertToHex = "#" & R & G & B
 End Function
+
+' 関数B：#RRGGBB 形式の文字列を VBAのColor値(Long)に変換する
+Private Function ConvertToRGB(ByVal hexColor As String) As Long
+    On Error GoTo ErrorHandler
+    Dim colorString As String
+    
+    ' "#" があれば取り除く
+    colorString = Replace(hexColor, "#", "")
+    ' 文字数が6文字でなければエラー
+    If Len(colorString) <> 6 Then GoTo ErrorHandler
+    
+    Dim R As Long, G As Long, B As Long
+    ' 16進数を R, G, B の各要素に分解
+    R = CLng("&H" & Mid(colorString, 1, 2))
+    G = CLng("&H" & Mid(colorString, 3, 2))
+    B = CLng("&H" & Mid(colorString, 5, 2))
+    
+    ' VBAのRGB関数で1つのLong値にまとめる
+    ConvertToRGB = RGB(R, G, B)
+    Exit Function
+    
+ErrorHandler:
+    ' 変換に失敗した場合は -1 を返す
+    ConvertToRGB = -1
+End Function
+
+
