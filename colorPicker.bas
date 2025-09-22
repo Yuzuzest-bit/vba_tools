@@ -1,5 +1,5 @@
 ' ====================================================================================
-' メインプロシージャ：選択中セルの色を16進数カラーコードで取得し、表示する
+' メインプロシージャ：選択中セルの色を16進数カラーコードで取得し、表示する (修正版)
 ' ====================================================================================
 Sub GetSelectedCellColor()
     Dim targetCell As Range
@@ -15,7 +15,10 @@ Sub GetSelectedCellColor()
     Set targetCell = Selection.Cells(1, 1)
     
     ' --- 色を取得し、16進数文字列に変換 ---
-    colorCode = ConvertToHex(targetCell.Interior.Color)
+    ' ▼▼▼【修正点】「.Interior.Color」から「.DisplayFormat.Interior.Color」に変更 ▼▼▼
+    ' これで、条件付き書式を含む「見たままの色」を取得できるようになります。
+    colorCode = ConvertToHex(targetCell.DisplayFormat.Interior.Color)
+    ' ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
     
     ' --- InputBoxで結果を表示（コピー可能な形式） ---
     InputBox "選択セルのカラーコード:", "カラーコード取得", colorCode
@@ -25,6 +28,7 @@ End Sub
 
 ' ====================================================================================
 ' ヘルパー関数：VBAのColor値(Long)を #RRGGBB 形式の文字列に変換する
+' (この関数は元々正しく作られているため、修正不要です)
 ' ====================================================================================
 Private Function ConvertToHex(ByVal rgbColor As Long) As String
     Dim R As String, G As String, B As String
