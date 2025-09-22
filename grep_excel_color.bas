@@ -118,7 +118,7 @@ End Sub
 
 
 ' ====================================================================================
-' 再帰検索プロシージャ：ファイルとフォルダを再帰的に探索し、セルの色をチェック
+' 再帰検索プロシージャ：ファイルとフォルダを再帰的に探索し、セルの色をチェック（修正版）
 ' ====================================================================================
 Private Sub RecursiveCellSearchByColor(ByVal targetFolderPath As String, ByVal resultSheet As Worksheet, _
                                         ByVal searchColor As Long, ByVal targetType As String)
@@ -143,14 +143,21 @@ Private Sub RecursiveCellSearchByColor(ByVal targetFolderPath As String, ByVal r
                         Dim found As Boolean
                         found = False
                         
+                        ' ==========================================================
+                        ' ▼▼▼ここが修正箇所▼▼▼
+                        ' DisplayFormatを使って、テーマカラーや条件付き書式を含む見た目通りの色で比較する
+                        ' ==========================================================
                         If targetType = "Interior" Then
                             ' 背景色のチェック
-                            If cell.Interior.Color = searchColor Then found = True
+                            If cell.DisplayFormat.Interior.Color = searchColor Then found = True
                         ElseIf targetType = "Font" Then
                             ' フォント色のチェック
-                            If cell.Font.Color = searchColor Then found = True
+                            If cell.DisplayFormat.Font.Color = searchColor Then found = True
                         End If
-                        
+                        ' ==========================================================
+                        ' ▲▲▲ここまで▲▲▲
+                        ' ==========================================================
+
                         If found Then
                             ' 結果をシートに書き込む
                             nextRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
