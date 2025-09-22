@@ -139,7 +139,7 @@ End Sub
 
 
 ' ====================================================================================
-' メインプロシージャ：指定された色を持つセルを検索する
+' メインプロシージャ：指定された色を持つセルを検索する (調査用コード)
 ' ====================================================================================
 Sub SearchCellsByColor(ByVal searchHexColor As String, ByVal searchTarget As String)
     ' --- 変数宣言 ---
@@ -158,6 +158,12 @@ Sub SearchCellsByColor(ByVal searchHexColor As String, ByVal searchTarget As Str
 
     ' --- 入力値の検証 ---
     searchColor = HexToRGB(searchHexColor)
+    
+    ' ▼▼▼【調査①】検索する色の値が正しいか確認します ▼▼▼
+    MsgBox "【調査①】" & vbCrLf & _
+           "入力されたHexコード: " & searchHexColor & vbCrLf & _
+           "VBAが変換した色の数値: " & searchColor, vbInformation, "検索色の値チェック"
+           
     If searchColor = -1 Then
         MsgBox "色の指定が正しくありません。'#FFFFFF' の形式で入力してください。", vbExclamation, "入力エラー"
         Exit Sub
@@ -237,7 +243,7 @@ End Sub
 
 
 ' ====================================================================================
-' 再帰検索プロシージャ：ファイルとフォルダを再帰的に探索し、セルの色をチェック（修正版）
+' 再帰検索プロシージャ：ファイルとフォルダを再帰的に探索し、セルの色をチェック (調査用コード)
 ' ====================================================================================
 Private Sub RecursiveCellSearchByColor(ByVal targetFolderPath As String, ByVal resultSheet As Worksheet, _
                                         ByVal searchColor As Long, ByVal targetType As String)
@@ -248,67 +254,82 @@ Private Sub RecursiveCellSearchByColor(ByVal targetFolderPath As String, ByVal r
     Dim wb As Workbook, ws As Worksheet, cell As Range
     Dim nextRow As Long
 
-    On Error GoTo ErrorHandler
+    ' ▼▼▼【調査②】ファイルのループが正しく実行されるか確認します ▼▼▼
+    MsgBox "【調査②】" & vbCrLf & _
+           "フォルダ「" & targetFolder.Name & "」内の " & targetFolder.Files.Count & " 個のファイルを検索します。", vbInformation, "フォルダ検索開始"
 
-    ' --- フォルダ内のファイルを検索 ---
     For Each file In targetFolder.Files
+        On Error Resume Next
+        Set wb = Nothing
+        Err.Clear
+
+        ' ▼▼▼【調査③】どのファイルを開こうとしているか確認します ▼▼▼
+        MsgBox "【調査③】" & vbCrLf & _
+               "ファイル「" & file.Name & "」を処理します。", vbInformation, "ファイル処理開始"
+
         Application.StatusBar = "検索中: " & file.Path
         If Not file.Name Like "~$*" And LCase(fso.GetExtensionName(file.Path)) Like "xls*" Then
             Set wb = Workbooks.Open(file.Path, ReadOnly:=True, UpdateLinks:=0)
-            For Each ws In wb.Worksheets
-                If ws.UsedRange.Cells.Count > 1 Or ws.UsedRange.Value <> "" Then 'シートにデータがある場合のみ実行
-                    ' データが存在するセル範囲をループ
-                    For Each cell In ws.UsedRange
-                        Dim found As Boolean
-                        found = False
-                        
-                        ' ==========================================================
-                        ' ▼▼▼ここが修正箇所▼▼▼
-                        ' DisplayFormatを使って、テーマカラーや条件付き書式を含む見た目通りの色で比較する
-                        ' ==========================================================
-                        If targetType = "Interior" Then
-                            ' 背景色のチェック
-                            If cell.DisplayFormat.Interior.Color = searchColor Then found = True
-                        ElseIf targetType = "Font" Then
-                            ' フォント色のチェック
-                            If cell.DisplayFormat.Font.Color = searchColor Then found = True
-                        End If
-                        ' ==========================================================
-                        ' ▲▲▲ここまで▲▲▲
-                        ' ==========================================================
-
-                        If found Then
-                            ' 結果をシートに書き込む
-                            nextRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
-                            With resultSheet
-                                .Cells(nextRow, "A").Value = cell.Value
-                                .Cells(nextRow, "B").Value = wb.Name
-                                .Cells(nextRow, "C").Value = ws.Name
-                                .Cells(nextRow, "D").Value = cell.Address(False, False)
-                                .Cells(nextRow, "E").Value = IIf(targetType = "Interior", "背景色", "フォント色")
-                                .Cells(nextRow, "F").Value = RGBToHex(searchColor)
-                                .Cells(nextRow, "G").Value = wb.FullName
-                                ' ハイパーリンクを作成
-                                .Cells(nextRow, "H").Formula = "=HYPERLINK(""[" & wb.FullName & "]'" & ws.Name & "'!" & cell.Address & """, ""ジャンプ"")"
-                            End With
-                        End If
-                    Next cell
-                End If
-            Next ws
-            wb.Close SaveChanges:=False
-            Set wb = Nothing
+            
+            If Err.Number = 0 Then
+                For Each ws In wb.Worksheets
+                    If ws.UsedRange.Cells.Count > 1 Or ws.UsedRange.Value <> "" Then
+                        For Each cell In ws.UsedRange
+                            ' ▼▼▼【調査④】セルの色と検索色が本当に一致しているか、特定のセルで止めます ▼▼▼
+                            ' ここでは例として B2 セルをチェックします。実際に色が付いているセル番地に変更してください。
+                            If cell.Address = "$B$2" Then
+                                Dim cellColor As Long
+                                If targetType = "Interior" Then
+                                    cellColor = cell.DisplayFormat.Interior.Color
+                                Else
+                                    cellColor = cell.DisplayFormat.Font.Color
+                                End If
+                                
+                                MsgBox "【調査④】 B2セルの色チェック" & vbCrLf & _
+                                       "--------------------------------" & vbCrLf & _
+                                       "セルの色の数値: " & cellColor & vbCrLf & _
+                                       "検索している色の数値: " & searchColor & vbCrLf & _
+                                       "--------------------------------" & vbCrLf & _
+                                       "これらの数値は一致していますか？", vbQuestion, "色の一致確認"
+                            End If
+                            
+                            ' --- 元の検索処理 ---
+                            Dim found As Boolean: found = False
+                            If targetType = "Interior" Then
+                                If cell.DisplayFormat.Interior.Color = searchColor Then found = True
+                            ElseIf targetType = "Font" Then
+                                If cell.DisplayFormat.Font.Color = searchColor Then found = True
+                            End If
+                            If found Then
+                                nextRow = resultSheet.Cells(resultSheet.Rows.Count, "A").End(xlUp).Row + 1
+                                With resultSheet
+                                    .Cells(nextRow, "A").Value = cell.Value
+                                    .Cells(nextRow, "B").Value = wb.Name
+                                    .Cells(nextRow, "C").Value = ws.Name
+                                    .Cells(nextRow, "D").Value = cell.Address(False, False)
+                                    .Cells(nextRow, "E").Value = IIf(targetType = "Interior", "背景色", "フォント色")
+                                    .Cells(nextRow, "F").Value = RGBToHex(searchColor)
+                                    .Cells(nextRow, "G").Value = wb.FullName
+                                    .Cells(nextRow, "H").Formula = "=HYPERLINK(""[" & wb.FullName & "]'" & ws.Name & "'!" & cell.Address & """, ""ジャンプ"")"
+                                End With
+                            End If
+                        Next cell
+                    End If
+                Next ws
+                wb.Close SaveChanges:=False
+            Else
+                MsgBox "ファイル「" & file.Name & "」を開けませんでした。", vbExclamation, "ファイルオープンエラー"
+            End If
         End If
+        
+        On Error GoTo 0
     Next file
 
-    ' --- サブフォルダを再帰的に検索 ---
     For Each subFolder In targetFolder.SubFolders
         Call RecursiveCellSearchByColor(subFolder.Path, resultSheet, searchColor, targetType)
     Next subFolder
-
-ErrorHandler:
-    If Not wb Is Nothing Then wb.Close SaveChanges:=False
-    Set fso = Nothing
 End Sub
+
 
 
 ' ====================================================================================
