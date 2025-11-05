@@ -324,28 +324,43 @@ Private Function BuildPath(ByVal head As String, ByVal tail As String) As String
     End If
 End Function
 
-' 再帰で *.pptx を収集
+' ===== 置き換え版：pptxを安全に再帰収集（Dir$は使わない） =====
+
 Private Sub CollectPptxFiles(ByVal root As String, ByRef outCol As Collection)
-    Dim f As String, subf As String
-    If Right$(root, 1) = "\" Or Right$(root, 1) = "/" Then
-        ' そのまま
-    Else
-        root = root & Application.PathSeparator
+    Dim fso As Object, fld As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    On Error Resume Next
+    If Not fso.FolderExists(root) Then Exit Sub
+    Set fld = fso.GetFolder(root)
+    On Error GoTo 0
+    
+    If Not fld Is Nothing Then
+        RecursePptxFSO fld, outCol, fso
     End If
+End Sub
+
+Private Sub RecursePptxFSO(ByVal fld As Object, ByRef outCol As Collection, ByVal fso As Object)
+    Dim f As Object, sf As Object
     
-    f = Dir$(root & "*.pptx", vbNormal)
-    Do While Len(f) > 0
-        outCol.Add root & f
-        f = Dir$
-    Loop
-    
-    subf = Dir$(root & "*", vbDirectory)
-    Do While Len(subf) > 0
-        If subf <> "." And subf <> ".." Then
-            If (GetAttr(root & subf) And vbDirectory) = vbDirectory Then
-                CollectPptxFiles root & subf, outCol
+    ' ファイル列挙（pptxのみ／~$ から始まる一時ファイルは除外）
+    On Error Resume Next  ' アクセス権で落ちないように
+    For Each f In fld.Files
+        If LCase$(fso.GetExtensionName(f.Name)) = "pptx" Then
+            If Left$(f.Name, 2) <> "~$" Then
+                outCol.Add f.Path
             End If
         End If
-        subf = Dir$
-    Loop
+    Next f
+    
+    ' サブフォルダを再帰
+    For Each sf In fld.SubFolders
+        ' 権限や再解析ポイント等で読めない場合はスキップ
+        If Err.Number <> 0 Then
+            Err.Clear
+        Else
+            RecursePptxFSO sf, outCol, fso
+        End If
+    Next sf
+    On Error GoTo 0
 End Sub
