@@ -285,30 +285,52 @@ Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
     Dim L As Long
     Dim startPos As Long, endPos As Long
     Dim pre As String, mid As String, post As String
-    Dim postLen As Long
+    Dim preLen As Long, midLen As Long, postStart As Long, postLen As Long
 
-    L = Len(txt)
-    If L = 0 Or pos < 1 Or hitLen < 1 Then
+    L = VBA.Len(txt)
+    If L <= 0 Or pos < 1 Or pos > L Then
         BuildSnippet = ""
         Exit Function
     End If
+    If hitLen < 1 Then hitLen = 1
 
-    ' ===== 手計算でクランプ（Min/Maxは使わない） =====
+    ' --- 範囲計算（手動クランプ） ---
     startPos = pos - radius
     If startPos < 1 Then startPos = 1
 
     endPos = pos + hitLen - 1 + radius
     If endPos > L Then endPos = L
-    If startPos > pos Then startPos = pos   ' 念のため
+    If endPos < startPos Then endPos = startPos
 
-    ' ===== 取り出し =====
-    pre = Mid$(txt, startPos, pos - startPos)
-    mid = Mid$(txt, pos, hitLen)
+    ' --- 前部 ---
+    preLen = pos - startPos
+    If preLen > 0 Then
+        pre = VBA.Mid$(txt, startPos, preLen)
+    Else
+        pre = ""
+    End If
 
-    postLen = endPos - (pos + hitLen) + 1
-    If postLen < 0 Then postLen = 0
-    If postLen > 0 Then
-        post = Mid$(txt, pos + hitLen, postLen)
+    ' --- ヒット部（文字列末尾超えを防ぐ） ---
+    midLen = hitLen
+    If pos + midLen - 1 > L Then midLen = L - pos + 1
+    If midLen < 0 Then midLen = 0
+    If midLen > 0 Then
+        mid = VBA.Mid$(txt, pos, midLen)
+    Else
+        mid = ""
+    End If
+
+    ' --- 後部 ---
+    postStart = pos + hitLen
+    If postStart < 1 Then postStart = 1
+    If postStart <= L Then
+        postLen = endPos - postStart + 1
+        If postLen < 0 Then postLen = 0
+        If postLen > 0 Then
+            post = VBA.Mid$(txt, postStart, postLen)
+        Else
+            post = ""
+        End If
     Else
         post = ""
     End If
@@ -316,7 +338,12 @@ Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
     If startPos > 1 Then pre = "…" & pre
     If endPos < L Then post = post & "…"
 
-    BuildSnippet = pre & "[" & mid & "]" & post
+    If midLen > 0 Then
+        BuildSnippet = pre & "[" & mid & "]" & post
+    Else
+        ' 念のため（通常は起きない）
+        BuildSnippet = pre & post
+    End If
 End Function
 
 Private Function PrepareResultSheet(ByVal wb As Workbook, ByVal name As String, _
