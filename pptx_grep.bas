@@ -1,13 +1,13 @@
 Option Explicit
 
-' ===== 設定値 =====
+' ===== 設定（誤検知を避ける方針：Shell/レジストリ/FSOは不使用、可視ウィンドウで開く） =====
 Private Const SHEET_NAME As String = "PPT_Search_Results"
-Private Const SNIPPET_RADIUS As Long = 30   ' ヒット語の前後に出す文字数
-' ==================
+Private Const SNIPPET_RADIUS As Long = 30
+Private Const OPEN_WITH_WINDOW As Boolean = True   ' True: ウィンドウ有りで開く（透明性重視）
+' =========================================================================================
 
 Public Sub SearchPPTXText()
-    Dim keyword As String
-    Dim cmp As VbCompareMethod
+    Dim keyword As String, cmp As VbCompareMethod
     Dim rootFolder As String
     Dim ws As Worksheet
     Dim rowOut As Long
@@ -16,75 +16,67 @@ Public Sub SearchPPTXText()
     Dim createdNew As Boolean
     Dim filePath As String
     Dim s As Long
-    
+
     On Error GoTo EH
-    
+
     keyword = InputBox("検索したい文字列を入力してください。", "PPTX全文検索")
     If Len(keyword) = 0 Then Exit Sub
-    
+
     If MsgBox("大文字小文字を区別しますか？", vbQuestion Or vbYesNo, "検索オプション") = vbYes Then
         cmp = vbBinaryCompare
     Else
         cmp = vbTextCompare
     End If
-    
+
     rootFolder = PickFolder("検索するルートフォルダを選択してください。")
     If Len(rootFolder) = 0 Then Exit Sub
-    
+
     Application.ScreenUpdating = False
-    
-    Set ws = PrepareResultSheet(ThisWorkbook, SHEET_NAME, keyword, rootFolder, _
-                                IIf(cmp = vbBinaryCompare, "区別する", "区別しない"))
+    Set ws = PrepareResultSheet(ThisWorkbook, SHEET_NAME, keyword, rootFolder, IIf(cmp = vbBinaryCompare, "区別する", "区別しない"))
     rowOut = 6
-    
+
     Set files = New Collection
-    CollectPptxFiles rootFolder, files
+    CollectPptxFiles_NoFSO rootFolder, files
     If files.Count = 0 Then
         MsgBox "pptxファイルが見つかりませんでした。", vbInformation
         GoTo Clean
     End If
-    
-    Set ppApp = GetPowerPointApp_NoRegistry(createdNew:=createdNew, makeVisible:=False, maxWaitSeconds:=30)
+
+    Set ppApp = GetPowerPointApp_NoShell(createdNew:=createdNew, makeVisible:=True, maxWaitSeconds:=30)
     If ppApp Is Nothing Then
         MsgBox "PowerPointを起動/接続できませんでした。", vbExclamation
         GoTo Clean
     End If
-    
+
     For Each f In files
         filePath = CStr(f)
         Set pres = Nothing
-        
+
         On Error Resume Next
-        Set pres = ppApp.Presentations.Open(filePath, ReadOnly:=True, Untitled:=False, WithWindow:=False)
-        If pres Is Nothing Then
-            Set pres = ppApp.Presentations.Open(filePath, ReadOnly:=True, Untitled:=False, WithWindow:=True)
-        End If
+        Set pres = ppApp.Presentations.Open(filePath, ReadOnly:=True, Untitled:=False, WithWindow:=OPEN_WITH_WINDOW)
         On Error GoTo EH
-        
         If pres Is Nothing Then GoTo NextFile
-        
+
         For s = 1 To pres.Slides.Count
             Set sld = pres.Slides(s)
-            ' スライド本体
             ScanShapes sld.Shapes, "", keyword, cmp, ws, rowOut, filePath, s, "Slide"
-            ' ノート
             On Error Resume Next
             If Not sld.NotesPage Is Nothing Then
                 ScanShapes sld.NotesPage.Shapes, "Notes", keyword, cmp, ws, rowOut, filePath, s, "Notes"
             End If
             On Error GoTo EH
         Next s
-        
+
         pres.Close
         Set pres = Nothing
-        
+
 NextFile:
         On Error Resume Next
         If Not pres Is Nothing Then pres.Close
         On Error GoTo EH
         DoEvents
     Next f
-    
+
 Clean:
     On Error Resume Next
     If Not ppApp Is Nothing Then
@@ -102,68 +94,58 @@ EH:
     MsgBox "エラー: " & Err.Number & " - " & Err.Description, vbExclamation
 End Sub
 
-' ====== PowerPointをレジストリ非依存で取得 ======
-Private Function GetPowerPointApp_NoRegistry(ByRef createdNew As Boolean, _
-    Optional ByVal makeVisible As Boolean = False, _
+' ==== PowerPoint を安全に取得（Shell/レジストリ不使用） ====
+Private Function GetPowerPointApp_NoShell(ByRef createdNew As Boolean, _
+    Optional ByVal makeVisible As Boolean = True, _
     Optional ByVal maxWaitSeconds As Long = 30) As Object
 
-    Dim app As Object
-    Dim t0 As Single
+    Dim app As Object, t0 As Single
     createdNew = False
-    
+
     ' 既存に接続
     On Error Resume Next
     Set app = GetObject(, "PowerPoint.Application")
     On Error GoTo 0
     If Not app Is Nothing Then
         app.Visible = makeVisible
-        Set GetPowerPointApp_NoRegistry = app
+        Set GetPowerPointApp_NoShell = app
         Exit Function
     End If
-    
-    ' 新規作成
+
+    ' 新規作成（標準COM）
     On Error Resume Next
     Set app = CreateObject("PowerPoint.Application")
     On Error GoTo 0
     If Not app Is Nothing Then
         createdNew = True
         app.Visible = makeVisible
-        Set GetPowerPointApp_NoRegistry = app
+        Set GetPowerPointApp_NoShell = app
         Exit Function
     End If
-    
-    ' Shell で既定起動
-    On Error Resume Next
-    Shell "powerpnt.exe", vbNormalFocus
-    On Error GoTo 0
-    
-    t0 = Timer
-RetryGetAfterShell:
-    Do
-        DoEvents
-        On Error Resume Next
-        Set app = GetObject(, "PowerPoint.Application")
-        On Error GoTo 0
-        If Not app Is Nothing Then
-            createdNew = True
-            app.Visible = makeVisible
-            Set GetPowerPointApp_NoRegistry = app
-            Exit Function
-        End If
-        If (Timer - t0) >= maxWaitSeconds Then Exit Do
-        Application.Wait Now + TimeSerial(0, 0, 1)
-    Loop
-    
-    If MsgBox("PowerPointを手動で起動してからOKを押してください。" & vbCrLf & _
-              "（レジストリには触れません）", vbOKCancel + vbExclamation, "PowerPoint 起動") = vbOK Then
+
+    ' 手動起動依頼（Shellを使わない）
+    If MsgBox("PowerPoint を手動で起動してから OK を押してください。" & vbCrLf & _
+              "（このマクロは Shell/レジストリに触れません）", vbOKCancel + vbExclamation, "PowerPoint 起動") = vbOK Then
         t0 = Timer
-        GoTo RetryGetAfterShell
+        Do
+            DoEvents
+            On Error Resume Next
+            Set app = GetObject(, "PowerPoint.Application")
+            On Error GoTo 0
+            If Not app Is Nothing Then
+                app.Visible = makeVisible
+                Set GetPowerPointApp_NoShell = app
+                Exit Function
+            End If
+            If (Timer - t0) >= maxWaitSeconds Then Exit Do
+            Application.Wait Now + TimeSerial(0, 0, 1)
+        Loop
     End If
-    
-    Set GetPowerPointApp_NoRegistry = Nothing
+
+    Set GetPowerPointApp_NoShell = Nothing
 End Function
 
-' ====== Shapes 走査（再帰） ======
+' ===== Shapes 走査 =====
 Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
                        ByVal keyword As String, ByVal cmp As VbCompareMethod, _
                        ByVal ws As Worksheet, ByRef rowOut As Long, _
@@ -175,7 +157,7 @@ Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
         Set shp = shapes(i)
         Dim curPath As String
         curPath = BuildPath(pathHead, shp.Name)
-        
+
         ' グループ
         If shp.Type = 6 Then
             On Error Resume Next
@@ -184,14 +166,13 @@ Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
             End If
             On Error GoTo 0
         End If
-        
+
         ' テーブル
         On Error Resume Next
         If shp.HasTable Then
-            Dim r As Long, c As Long
+            Dim r As Long, c As Long, cellShp As Object
             For r = 1 To shp.Table.Rows.Count
                 For c = 1 To shp.Table.Columns.Count
-                    Dim cellShp As Object
                     Set cellShp = shp.Table.Cell(r, c).Shape
                     If HasText(cellShp) Then
                         EmitMatches cellShp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
@@ -201,14 +182,14 @@ Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
             Next r
         End If
         On Error GoTo 0
-        
+
         ' 通常テキスト
         If HasText(shp) Then
             EmitMatches shp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
                         filePath, slideIndex, curPath, area
         End If
-        
-        ' SmartArt（取得できる範囲）
+
+        ' SmartArt（取れる範囲）
         On Error Resume Next
         Dim n As Object, smp As Object
         If Not shp.SmartArt Is Nothing Then
@@ -235,17 +216,16 @@ Private Sub ScanGroupItems(ByVal grpShp As Object, ByVal pathHead As String, _
         Set gi = grpShp.GroupItems(j)
         Dim curPath As String
         curPath = BuildPath(pathHead, gi.Name)
-        
+
         If gi.Type = 6 Then
             ScanGroupItems gi, curPath, keyword, cmp, ws, rowOut, filePath, slideIndex, area
         End If
-        
+
         On Error Resume Next
         If gi.HasTable Then
-            Dim r As Long, c As Long
+            Dim r As Long, c As Long, cellShp As Object
             For r = 1 To gi.Table.Rows.Count
                 For c = 1 To gi.Table.Columns.Count
-                    Dim cellShp As Object
                     Set cellShp = gi.Table.Cell(r, c).Shape
                     If HasText(cellShp) Then
                         EmitMatches cellShp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
@@ -255,7 +235,7 @@ Private Sub ScanGroupItems(ByVal grpShp As Object, ByVal pathHead As String, _
             Next r
         End If
         On Error GoTo 0
-        
+
         If HasText(gi) Then
             EmitMatches gi.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
                         filePath, slideIndex, curPath, area
@@ -275,6 +255,7 @@ NG:
     HasText = False
 End Function
 
+' ==== ヒット出力 ====
 Private Sub EmitMatches(ByVal fullText As String, ByVal keyword As String, _
                         ByVal cmp As VbCompareMethod, ByVal ws As Worksheet, _
                         ByRef rowOut As Long, ByVal filePath As String, _
@@ -283,7 +264,7 @@ Private Sub EmitMatches(ByVal fullText As String, ByVal keyword As String, _
     Dim pos As Long, klen As Long
     klen = Len(keyword)
     If klen = 0 Then Exit Sub
-    
+
     pos = InStr(1, fullText, keyword, cmp)
     Do While pos > 0
         rowOut = rowOut + 1
@@ -304,15 +285,15 @@ Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
     Dim startPos As Long, endPos As Long
     startPos = Application.Max(1, pos - radius)
     endPos = Application.Min(Len(txt), pos + hitLen - 1 + radius)
-    
+
     Dim pre As String, mid As String, post As String
     pre = Mid$(txt, startPos, pos - startPos)
     mid = Mid$(txt, pos, hitLen)
     post = Mid$(txt, pos + hitLen, endPos - (pos + hitLen) + 1)
-    
+
     If startPos > 1 Then pre = "…" & pre
     If endPos < Len(txt) Then post = post & "…"
-    
+
     BuildSnippet = pre & "[" & mid & "]" & post
 End Function
 
@@ -326,10 +307,10 @@ Private Function PrepareResultSheet(ByVal wb As Workbook, ByVal name As String, 
     If Not ws Is Nothing Then ws.Delete
     Application.DisplayAlerts = True
     On Error GoTo 0
-    
+
     Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
     ws.Name = name
-    
+
     With ws
         .Range("A1").Value = "PPTX全文検索結果"
         .Range("A2").Value = "検索語: " & keyword
@@ -344,7 +325,7 @@ Private Function PrepareResultSheet(ByVal wb As Workbook, ByVal name As String, 
         .Columns("A:F").VerticalAlignment = xlTop
         .Range("A1:A4").Font.Bold = True
     End With
-    
+
     Set PrepareResultSheet = ws
 End Function
 
@@ -370,39 +351,45 @@ Private Function BuildPath(ByVal head As String, ByVal tail As String) As String
     End If
 End Function
 
-' ====== Dir$を使わずに再帰収集（FSO） ======
-Private Sub CollectPptxFiles(ByVal root As String, ByRef outCol As Collection)
-    Dim fso As Object, fld As Object
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    
-    On Error Resume Next
-    If Not fso.FolderExists(root) Then Exit Sub
-    Set fld = fso.GetFolder(root)
-    On Error GoTo 0
-    
-    If Not fld Is Nothing Then
-        RecursePptxFSO fld, outCol, fso
-    End If
-End Sub
+' ==== Dir を使った反復走査（非再帰・ステート破壊回避・FSO不使用） ====
+Private Sub CollectPptxFiles_NoFSO(ByVal root As String, ByRef outCol As Collection)
+    Dim stack As New Collection
+    Dim cur As String, d As String, f As String
+    Dim attr As VbFileAttribute
 
-Private Sub RecursePptxFSO(ByVal fld As Object, ByRef outCol As Collection, ByVal fso As Object)
-    Dim f As Object, sf As Object
-    
+    ' 末尾セパレータ整形
+    If Right$(root, 1) <> Application.PathSeparator Then root = root & Application.PathSeparator
     On Error Resume Next
-    For Each f In fld.Files
-        If LCase$(fso.GetExtensionName(f.Name)) = "pptx" Then
-            If Left$(f.Name, 2) <> "~$" Then
-                outCol.Add f.Path
-            End If
-        End If
-    Next f
-    
-    For Each sf In fld.SubFolders
-        If Err.Number <> 0 Then
-            Err.Clear
-        Else
-            RecursePptxFSO sf, outCol, fso
-        End If
-    Next sf
+    stack.Add root
     On Error GoTo 0
+
+    Do While stack.Count > 0
+        cur = CStr(stack.Item(stack.Count))
+        stack.Remove stack.Count
+
+        ' --- ファイル列挙（.pptx） ---
+        f = Dir$(cur & "*.pptx", vbNormal)
+        Do While Len(f) > 0
+            If Left$(f, 2) <> "~$" Then
+                outCol.Add cur & f
+            End If
+            f = Dir$()
+        Loop
+
+        ' --- サブフォルダ列挙（後で走査するためスタックに積む） ---
+        d = Dir$(cur & "*", vbDirectory)
+        Do While Len(d) > 0
+            If d <> "." And d <> ".." Then
+                attr = GetAttr(cur & d)
+                If (attr And vbDirectory) = vbDirectory Then
+                    ' 隠し/システムも基本は対象。ただしアクセス拒否は次ループでスキップされる
+                    On Error Resume Next
+                    stack.Add cur & d & Application.PathSeparator
+                    If Err.Number <> 0 Then Err.Clear
+                    On Error GoTo 0
+                End If
+            End If
+            d = Dir$()
+        Loop
+    Loop
 End Sub
