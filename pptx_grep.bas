@@ -282,17 +282,39 @@ End Sub
 
 Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
                               ByVal hitLen As Long, ByVal radius As Long) As String
+    Dim L As Long
     Dim startPos As Long, endPos As Long
-    startPos = Application.Max(1, pos - radius)
-    endPos = Application.Min(Len(txt), pos + hitLen - 1 + radius)
-
     Dim pre As String, mid As String, post As String
+    Dim postLen As Long
+
+    L = Len(txt)
+    If L = 0 Or pos < 1 Or hitLen < 1 Then
+        BuildSnippet = ""
+        Exit Function
+    End If
+
+    ' ===== 手計算でクランプ（Min/Maxは使わない） =====
+    startPos = pos - radius
+    If startPos < 1 Then startPos = 1
+
+    endPos = pos + hitLen - 1 + radius
+    If endPos > L Then endPos = L
+    If startPos > pos Then startPos = pos   ' 念のため
+
+    ' ===== 取り出し =====
     pre = Mid$(txt, startPos, pos - startPos)
     mid = Mid$(txt, pos, hitLen)
-    post = Mid$(txt, pos + hitLen, endPos - (pos + hitLen) + 1)
+
+    postLen = endPos - (pos + hitLen) + 1
+    If postLen < 0 Then postLen = 0
+    If postLen > 0 Then
+        post = Mid$(txt, pos + hitLen, postLen)
+    Else
+        post = ""
+    End If
 
     If startPos > 1 Then pre = "…" & pre
-    If endPos < Len(txt) Then post = post & "…"
+    If endPos < L Then post = post & "…"
 
     BuildSnippet = pre & "[" & mid & "]" & post
 End Function
