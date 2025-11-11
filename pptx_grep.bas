@@ -1,9 +1,10 @@
 Option Explicit
 
-' ===== 設定（誤検知を避ける方針：Shell/レジストリ/FSOは不使用、可視ウィンドウで開く） =====
+' ===== 安全ポリシー：Shell/レジストリ/FSO 不使用、PowerPointは標準COMのみ、可視ウィンドウ可 =====
 Private Const SHEET_NAME As String = "PPT_Search_Results"
 Private Const SNIPPET_RADIUS As Long = 30
-Private Const OPEN_WITH_WINDOW As Boolean = True   ' True: ウィンドウ有りで開く（透明性重視）
+Private Const OPEN_WITH_WINDOW As Boolean = True   ' 透明性優先（Falseにすると更に速いが社内方針に合わせて切替）
+Private Const BUF_SIZE As Long = 500               ' バッファ行数（メモリと相談で 200～2000 程度に調整可）
 ' =========================================================================================
 
 Public Sub SearchPPTXText()
@@ -16,6 +17,17 @@ Public Sub SearchPPTXText()
     Dim createdNew As Boolean
     Dim filePath As String
     Dim s As Long
+
+    ' バッファ（A～F列 6列分）：A列はHYPERLINK式で作成
+    Dim buf() As Variant: ReDim buf(1 To BUF_SIZE, 1 To 6)
+    Dim bufIdx As Long: bufIdx = 0
+
+    ' Excel最適化（復元前提）
+    Dim prevCalc As XlCalculation
+    Dim prevScreen As Boolean, prevEvents As Boolean
+    prevCalc = Application.Calculation
+    prevScreen = Application.ScreenUpdating
+    prevEvents = Application.EnableEvents
 
     On Error GoTo EH
 
@@ -31,9 +43,13 @@ Public Sub SearchPPTXText()
     rootFolder = PickFolder("検索するルートフォルダを選択してください。")
     If Len(rootFolder) = 0 Then Exit Sub
 
+    ' ---- Excel側の描画・計算負荷を抑制 ----
     Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
     Set ws = PrepareResultSheet(ThisWorkbook, SHEET_NAME, keyword, rootFolder, IIf(cmp = vbBinaryCompare, "区別する", "区別しない"))
-    rowOut = 6
+    rowOut = 6   ' 見出しが6行目、データは7行目以降
 
     Set files = New Collection
     CollectPptxFiles_NoFSO rootFolder, files
@@ -59,10 +75,12 @@ Public Sub SearchPPTXText()
 
         For s = 1 To pres.Slides.Count
             Set sld = pres.Slides(s)
-            ScanShapes sld.Shapes, "", keyword, cmp, ws, rowOut, filePath, s, "Slide"
+            ScanShapes sld.Shapes, "", keyword, cmp, ws, rowOut, _
+                       buf, bufIdx, BUF_SIZE, filePath, s, "Slide"
             On Error Resume Next
             If Not sld.NotesPage Is Nothing Then
-                ScanShapes sld.NotesPage.Shapes, "Notes", keyword, cmp, ws, rowOut, filePath, s, "Notes"
+                ScanShapes sld.NotesPage.Shapes, "Notes", keyword, cmp, ws, rowOut, _
+                           buf, bufIdx, BUF_SIZE, filePath, s, "Notes"
             End If
             On Error GoTo EH
         Next s
@@ -74,23 +92,36 @@ NextFile:
         On Error Resume Next
         If Not pres Is Nothing Then pres.Close
         On Error GoTo EH
+
+        ' UIの固まりを防ぐためにごく稀にDoEvents（毎ファイルは不要）
         DoEvents
     Next f
 
+    ' 残りのバッファを一括書き出し
+    FlushBuffer ws, rowOut, buf, bufIdx
+
 Clean:
+    ' 復元・後処理
     On Error Resume Next
     If Not ppApp Is Nothing Then
         If createdNew Then ppApp.Quit
     End If
     Set ppApp = Nothing
-    Application.ScreenUpdating = True
+
+    Application.Calculation = prevCalc
+    Application.EnableEvents = prevEvents
+    Application.ScreenUpdating = prevScreen
     Exit Sub
 
 EH:
     On Error Resume Next
+    FlushBuffer ws, rowOut, buf, bufIdx
     If Not pres Is Nothing Then pres.Close
     If Not ppApp Is Nothing Then If createdNew Then ppApp.Quit
-    Application.ScreenUpdating = True
+
+    Application.Calculation = prevCalc
+    Application.EnableEvents = prevEvents
+    Application.ScreenUpdating = prevScreen
     MsgBox "エラー: " & Err.Number & " - " & Err.Description, vbExclamation
 End Sub
 
@@ -145,10 +176,11 @@ Private Function GetPowerPointApp_NoShell(ByRef createdNew As Boolean, _
     Set GetPowerPointApp_NoShell = Nothing
 End Function
 
-' ===== Shapes 走査 =====
+' ===== Shapes 走査（配列バッファ方式に対応） =====
 Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
                        ByVal keyword As String, ByVal cmp As VbCompareMethod, _
                        ByVal ws As Worksheet, ByRef rowOut As Long, _
+                       ByRef buf As Variant, ByRef bufIdx As Long, ByVal bufMax As Long, _
                        ByVal filePath As String, ByVal slideIndex As Long, _
                        ByVal area As String)
     Dim i As Long
@@ -159,10 +191,11 @@ Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
         curPath = BuildPath(pathHead, shp.Name)
 
         ' グループ
-        If shp.Type = 6 Then
+        If shp.Type = 6 Then ' msoGroup
             On Error Resume Next
             If shp.GroupItems.Count > 0 Then
-                ScanGroupItems shp, curPath, keyword, cmp, ws, rowOut, filePath, slideIndex, area
+                ScanGroupItems shp, curPath, keyword, cmp, ws, rowOut, _
+                               buf, bufIdx, bufMax, filePath, slideIndex, area
             End If
             On Error GoTo 0
         End If
@@ -171,12 +204,15 @@ Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
         On Error Resume Next
         If shp.HasTable Then
             Dim r As Long, c As Long, cellShp As Object
-            For r = 1 To shp.Table.Rows.Count
-                For c = 1 To shp.Table.Columns.Count
+            Dim rMax As Long, cMax As Long
+            rMax = shp.Table.Rows.Count: cMax = shp.Table.Columns.Count
+            For r = 1 To rMax
+                For c = 1 To cMax
                     Set cellShp = shp.Table.Cell(r, c).Shape
                     If HasText(cellShp) Then
-                        EmitMatches cellShp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
-                                    filePath, slideIndex, BuildPath(curPath, "Table(" & r & "," & c & ")"), area
+                        EmitMatchBuffered cellShp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
+                                          buf, bufIdx, bufMax, filePath, slideIndex, _
+                                          BuildPath(curPath, "Table(" & r & "," & c & ")"), area
                     End If
                 Next c
             Next r
@@ -185,8 +221,8 @@ Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
 
         ' 通常テキスト
         If HasText(shp) Then
-            EmitMatches shp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
-                        filePath, slideIndex, curPath, area
+            EmitMatchBuffered shp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
+                              buf, bufIdx, bufMax, filePath, slideIndex, curPath, area
         End If
 
         ' SmartArt（取れる範囲）
@@ -196,8 +232,9 @@ Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
             For Each n In shp.SmartArt.AllNodes
                 Set smp = n.Shapes(1)
                 If HasText(smp) Then
-                    EmitMatches smp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
-                                filePath, slideIndex, BuildPath(curPath, "SmartArtNode"), area
+                    EmitMatchBuffered smp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
+                                      buf, bufIdx, bufMax, filePath, slideIndex, _
+                                      BuildPath(curPath, "SmartArtNode"), area
                 End If
             Next n
         End If
@@ -208,6 +245,7 @@ End Sub
 Private Sub ScanGroupItems(ByVal grpShp As Object, ByVal pathHead As String, _
                            ByVal keyword As String, ByVal cmp As VbCompareMethod, _
                            ByVal ws As Worksheet, ByRef rowOut As Long, _
+                           ByRef buf As Variant, ByRef bufIdx As Long, ByVal bufMax As Long, _
                            ByVal filePath As String, ByVal slideIndex As Long, _
                            ByVal area As String)
     Dim j As Long
@@ -218,18 +256,22 @@ Private Sub ScanGroupItems(ByVal grpShp As Object, ByVal pathHead As String, _
         curPath = BuildPath(pathHead, gi.Name)
 
         If gi.Type = 6 Then
-            ScanGroupItems gi, curPath, keyword, cmp, ws, rowOut, filePath, slideIndex, area
+            ScanGroupItems gi, curPath, keyword, cmp, ws, rowOut, _
+                           buf, bufIdx, bufMax, filePath, slideIndex, area
         End If
 
         On Error Resume Next
         If gi.HasTable Then
             Dim r As Long, c As Long, cellShp As Object
-            For r = 1 To gi.Table.Rows.Count
-                For c = 1 To gi.Table.Columns.Count
+            Dim rMax As Long, cMax As Long
+            rMax = gi.Table.Rows.Count: cMax = gi.Table.Columns.Count
+            For r = 1 To rMax
+                For c = 1 To cMax
                     Set cellShp = gi.Table.Cell(r, c).Shape
                     If HasText(cellShp) Then
-                        EmitMatches cellShp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
-                                    filePath, slideIndex, BuildPath(curPath, "Table(" & r & "," & c & ")"), area
+                        EmitMatchBuffered cellShp.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
+                                          buf, bufIdx, bufMax, filePath, slideIndex, _
+                                          BuildPath(curPath, "Table(" & r & "," & c & ")"), area
                     End If
                 Next c
             Next r
@@ -237,8 +279,8 @@ Private Sub ScanGroupItems(ByVal grpShp As Object, ByVal pathHead As String, _
         On Error GoTo 0
 
         If HasText(gi) Then
-            EmitMatches gi.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
-                        filePath, slideIndex, curPath, area
+            EmitMatchBuffered gi.TextFrame.TextRange.Text, keyword, cmp, ws, rowOut, _
+                              buf, bufIdx, bufMax, filePath, slideIndex, curPath, area
         End If
     Next j
 End Sub
@@ -255,29 +297,45 @@ NG:
     HasText = False
 End Function
 
-' ==== ヒット出力 ====
-Private Sub EmitMatches(ByVal fullText As String, ByVal keyword As String, _
-                        ByVal cmp As VbCompareMethod, ByVal ws As Worksheet, _
-                        ByRef rowOut As Long, ByVal filePath As String, _
-                        ByVal slideIndex As Long, ByVal wherePath As String, _
-                        ByVal area As String)
+' ==== ヒット出力（配列バッファ → 一括貼付け） ====
+Private Sub EmitMatchBuffered(ByVal fullText As String, ByVal keyword As String, _
+                              ByVal cmp As VbCompareMethod, ByVal ws As Worksheet, _
+                              ByRef rowOut As Long, ByRef buf As Variant, _
+                              ByRef bufIdx As Long, ByVal bufMax As Long, _
+                              ByVal filePath As String, ByVal slideIndex As Long, _
+                              ByVal wherePath As String, ByVal area As String)
     Dim pos As Long, klen As Long
     klen = Len(keyword)
     If klen = 0 Then Exit Sub
 
     pos = InStr(1, fullText, keyword, cmp)
     Do While pos > 0
-        rowOut = rowOut + 1
-        With ws
-            .Hyperlinks.Add Anchor:=.Cells(rowOut, 1), Address:=filePath, TextToDisplay:=Dir$(filePath)
-            .Cells(rowOut, 2).Value = filePath
-            .Cells(rowOut, 3).Value = slideIndex
-            .Cells(rowOut, 4).Value = area
-            .Cells(rowOut, 5).Value = wherePath
-            .Cells(rowOut, 6).Value = BuildSnippet(fullText, pos, klen, SNIPPET_RADIUS)
-        End With
+        bufIdx = bufIdx + 1
+        ' A列は =HYPERLINK("フルパス","ファイル名") を式で
+        buf(bufIdx, 1) = "=HYPERLINK(""" & filePath & """,""" & Dir$(filePath) & """)"
+        buf(bufIdx, 2) = filePath
+        buf(bufIdx, 3) = slideIndex
+        buf(bufIdx, 4) = area
+        buf(bufIdx, 5) = wherePath
+        buf(bufIdx, 6) = BuildSnippet(fullText, pos, klen, SNIPPET_RADIUS)
+
+        If bufIdx >= bufMax Then
+            FlushBuffer ws, rowOut, buf, bufIdx
+        End If
+
         pos = InStr(pos + klen, fullText, keyword, cmp)
     Loop
+End Sub
+
+' ==== バッファをシートに一括反映 ====
+Private Sub FlushBuffer(ByVal ws As Worksheet, ByRef rowOut As Long, _
+                        ByRef buf As Variant, ByRef bufIdx As Long)
+    If bufIdx <= 0 Then Exit Sub
+    Dim startRow As Long
+    startRow = rowOut + 1
+    ws.Range("A" & startRow).Resize(bufIdx, 6).Value2 = buf
+    rowOut = rowOut + bufIdx
+    bufIdx = 0
 End Sub
 
 Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
@@ -310,7 +368,7 @@ Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
         pre = ""
     End If
 
-    ' --- ヒット部（文字列末尾超えを防ぐ） ---
+    ' --- ヒット部 ---
     midLen = hitLen
     If pos + midLen - 1 > L Then midLen = L - pos + 1
     If midLen < 0 Then midLen = 0
@@ -341,7 +399,6 @@ Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
     If midLen > 0 Then
         BuildSnippet = pre & "[" & mid & "]" & post
     Else
-        ' 念のため（通常は起きない）
         BuildSnippet = pre & post
     End If
 End Function
@@ -400,13 +457,12 @@ Private Function BuildPath(ByVal head As String, ByVal tail As String) As String
     End If
 End Function
 
-' ==== Dir を使った反復走査（非再帰・ステート破壊回避・FSO不使用） ====
+' ==== Dir を使った反復走査（非再帰・FSO不使用） ====
 Private Sub CollectPptxFiles_NoFSO(ByVal root As String, ByRef outCol As Collection)
     Dim stack As New Collection
     Dim cur As String, d As String, f As String
     Dim attr As VbFileAttribute
 
-    ' 末尾セパレータ整形
     If Right$(root, 1) <> Application.PathSeparator Then root = root & Application.PathSeparator
     On Error Resume Next
     stack.Add root
@@ -425,13 +481,12 @@ Private Sub CollectPptxFiles_NoFSO(ByVal root As String, ByRef outCol As Collect
             f = Dir$()
         Loop
 
-        ' --- サブフォルダ列挙（後で走査するためスタックに積む） ---
+        ' --- サブフォルダ列挙 ---
         d = Dir$(cur & "*", vbDirectory)
         Do While Len(d) > 0
             If d <> "." And d <> ".." Then
                 attr = GetAttr(cur & d)
                 If (attr And vbDirectory) = vbDirectory Then
-                    ' 隠し/システムも基本は対象。ただしアクセス拒否は次ループでスキップされる
                     On Error Resume Next
                     stack.Add cur & d & Application.PathSeparator
                     If Err.Number <> 0 Then Err.Clear
