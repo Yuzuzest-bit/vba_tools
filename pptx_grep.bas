@@ -1,10 +1,21 @@
+了解です。丸ごと貼り付けて使えるよう、全コードをまとめました（Shell/レジストリ/FSO不使用、可視のまま最小化オプションあり、処理時間はA5に記録＋完了MsgBox表示）。
+
 Option Explicit
 
 ' ===== 安全ポリシー：Shell/レジストリ/FSO 不使用、PowerPointは標準COMのみ、可視ウィンドウ可 =====
 Private Const SHEET_NAME As String = "PPT_Search_Results"
 Private Const SNIPPET_RADIUS As Long = 30
-Private Const OPEN_WITH_WINDOW As Boolean = True   ' 透明性優先（Falseにすると更に速いが社内方針に合わせて切替）
-Private Const BUF_SIZE As Long = 500               ' バッファ行数（メモリと相談で 200～2000 程度に調整可）
+Private Const OPEN_WITH_WINDOW As Boolean = True   ' True: ウィンドウ有りで開く（透明性重視）
+Private Const BUF_SIZE As Long = 500               ' 一括貼付けバッファ行数（200～2000で調整可）
+
+' 可視のまま最小化オプション（誤検知リスクは極小）
+Private Const MINIMIZE_PPT_WINDOW As Boolean = True
+Private Const RESTORE_PPT_WINDOW_AT_END As Boolean = False  ' Trueにすると最後に通常表示に戻す
+
+' 遅バインディング用の定数（PowerPoint.WindowState）
+Private Const ppWindowNormal As Long = 1
+Private Const ppWindowMinimized As Long = 2
+
 ' =========================================================================================
 
 Public Sub SearchPPTXText()
@@ -22,12 +33,15 @@ Public Sub SearchPPTXText()
     Dim buf() As Variant: ReDim buf(1 To BUF_SIZE, 1 To 6)
     Dim bufIdx As Long: bufIdx = 0
 
-    ' Excel最適化（復元前提）
+    ' Excel最適化（復元用の退避）
     Dim prevCalc As XlCalculation
     Dim prevScreen As Boolean, prevEvents As Boolean
     prevCalc = Application.Calculation
     prevScreen = Application.ScreenUpdating
     prevEvents = Application.EnableEvents
+
+    ' 経過時間計測
+    Dim t0 As Double, t1 As Double, elapsed As Double
 
     On Error GoTo EH
 
@@ -43,6 +57,8 @@ Public Sub SearchPPTXText()
     rootFolder = PickFolder("検索するルートフォルダを選択してください。")
     If Len(rootFolder) = 0 Then Exit Sub
 
+    t0 = Timer ' 測定開始
+
     ' ---- Excel側の描画・計算負荷を抑制 ----
     Application.ScreenUpdating = False
     Application.EnableEvents = False
@@ -54,14 +70,27 @@ Public Sub SearchPPTXText()
     Set files = New Collection
     CollectPptxFiles_NoFSO rootFolder, files
     If files.Count = 0 Then
-        MsgBox "pptxファイルが見つかりませんでした。", vbInformation
+        ' 処理時間を表示して終了
+        t1 = Timer: elapsed = CalcElapsed(t0, t1)
+        ws.Range("A5").Value = "処理時間: " & FormatElapsed(elapsed) & "（合計 " & Format$(elapsed, "0.0") & " 秒）"
         GoTo Clean
     End If
 
     Set ppApp = GetPowerPointApp_NoShell(createdNew:=createdNew, makeVisible:=True, maxWaitSeconds:=30)
     If ppApp Is Nothing Then
+        ' 処理時間を表示して終了
+        t1 = Timer: elapsed = CalcElapsed(t0, t1)
+        ws.Range("A5").Value = "処理時間: " & FormatElapsed(elapsed) & "（合計 " & Format$(elapsed, "0.0") & " 秒）"
         MsgBox "PowerPointを起動/接続できませんでした。", vbExclamation
         GoTo Clean
+    End If
+
+    ' 可視のまま最小化（任意）
+    If MINIMIZE_PPT_WINDOW Then
+        On Error Resume Next
+        ppApp.Visible = True
+        ppApp.WindowState = ppWindowMinimized
+        On Error GoTo EH
     End If
 
     For Each f In files
@@ -93,16 +122,26 @@ NextFile:
         If Not pres Is Nothing Then pres.Close
         On Error GoTo EH
 
-        ' UIの固まりを防ぐためにごく稀にDoEvents（毎ファイルは不要）
+        ' UIの固まりを防ぐために控えめにDoEvents
         DoEvents
     Next f
 
     ' 残りのバッファを一括書き出し
     FlushBuffer ws, rowOut, buf, bufIdx
 
+    ' 処理時間を記録
+    t1 = Timer: elapsed = CalcElapsed(t0, t1)
+    ws.Range("A5").Value = "処理時間: " & FormatElapsed(elapsed) & "（合計 " & Format$(elapsed, "0.0") & " 秒）"
+    MsgBox "完了しました。処理時間: " & FormatElapsed(elapsed), vbInformation
+
 Clean:
     ' 復元・後処理
     On Error Resume Next
+
+    If RESTORE_PPT_WINDOW_AT_END And Not ppApp Is Nothing Then
+        ppApp.WindowState = ppWindowNormal
+    End If
+
     If Not ppApp Is Nothing Then
         If createdNew Then ppApp.Quit
     End If
@@ -115,14 +154,27 @@ Clean:
 
 EH:
     On Error Resume Next
-    FlushBuffer ws, rowOut, buf, bufIdx
+
+    ' バッファは可能なら吐き出しておく
+    If Not ws Is Nothing Then FlushBuffer ws, rowOut, buf, bufIdx
+
+    ' 経過時間を記録
+    t1 = Timer: elapsed = CalcElapsed(t0, t1)
+    If Not ws Is Nothing Then
+        ws.Range("A5").Value = "（エラー）処理時間: " & FormatElapsed(elapsed) & "（合計 " & Format$(elapsed, "0.0") & " 秒）"
+    End If
+
     If Not pres Is Nothing Then pres.Close
-    If Not ppApp Is Nothing Then If createdNew Then ppApp.Quit
+    If Not ppApp Is Nothing Then
+        If createdNew Then ppApp.Quit
+    End If
 
     Application.Calculation = prevCalc
     Application.EnableEvents = prevEvents
     Application.ScreenUpdating = prevScreen
-    MsgBox "エラー: " & Err.Number & " - " & Err.Description, vbExclamation
+
+    MsgBox "エラー: " & Err.Number & " - " & Err.Description & vbCrLf & _
+           "処理時間: " & FormatElapsed(elapsed), vbExclamation
 End Sub
 
 ' ==== PowerPoint を安全に取得（Shell/レジストリ不使用） ====
@@ -176,7 +228,7 @@ Private Function GetPowerPointApp_NoShell(ByRef createdNew As Boolean, _
     Set GetPowerPointApp_NoShell = Nothing
 End Function
 
-' ===== Shapes 走査（配列バッファ方式に対応） =====
+' ===== Shapes 走査（配列バッファ方式） =====
 Private Sub ScanShapes(ByVal shapes As Object, ByVal pathHead As String, _
                        ByVal keyword As String, ByVal cmp As VbCompareMethod, _
                        ByVal ws As Worksheet, ByRef rowOut As Long, _
@@ -311,7 +363,7 @@ Private Sub EmitMatchBuffered(ByVal fullText As String, ByVal keyword As String,
     pos = InStr(1, fullText, keyword, cmp)
     Do While pos > 0
         bufIdx = bufIdx + 1
-        ' A列は =HYPERLINK("フルパス","ファイル名") を式で
+        ' A列は =HYPERLINK("フルパス","ファイル名") の式で
         buf(bufIdx, 1) = "=HYPERLINK(""" & filePath & """,""" & Dir$(filePath) & """)"
         buf(bufIdx, 2) = filePath
         buf(bufIdx, 3) = slideIndex
@@ -338,6 +390,7 @@ Private Sub FlushBuffer(ByVal ws As Worksheet, ByRef rowOut As Long, _
     bufIdx = 0
 End Sub
 
+' ==== スニペット生成 ====
 Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
                               ByVal hitLen As Long, ByVal radius As Long) As String
     Dim L As Long
@@ -352,7 +405,7 @@ Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
     End If
     If hitLen < 1 Then hitLen = 1
 
-    ' --- 範囲計算（手動クランプ） ---
+    ' --- 範囲計算（クランプ） ---
     startPos = pos - radius
     If startPos < 1 Then startPos = 1
 
@@ -403,6 +456,7 @@ Private Function BuildSnippet(ByVal txt As String, ByVal pos As Long, _
     End If
 End Function
 
+' ==== 出力シート生成 ====
 Private Function PrepareResultSheet(ByVal wb As Workbook, ByVal name As String, _
                                     ByVal keyword As String, ByVal root As String, _
                                     ByVal cs As String) As Worksheet
@@ -435,6 +489,7 @@ Private Function PrepareResultSheet(ByVal wb As Workbook, ByVal name As String, 
     Set PrepareResultSheet = ws
 End Function
 
+' ==== フォルダ選択（標準のFileDialogのみ使用） ====
 Private Function PickFolder(ByVal title As String) As String
     Dim fd As FileDialog
     Set fd = Application.FileDialog(msoFileDialogFolderPicker)
@@ -463,6 +518,7 @@ Private Sub CollectPptxFiles_NoFSO(ByVal root As String, ByRef outCol As Collect
     Dim cur As String, d As String, f As String
     Dim attr As VbFileAttribute
 
+    ' 末尾セパレータ整形
     If Right$(root, 1) <> Application.PathSeparator Then root = root & Application.PathSeparator
     On Error Resume Next
     stack.Add root
@@ -472,7 +528,7 @@ Private Sub CollectPptxFiles_NoFSO(ByVal root As String, ByRef outCol As Collect
         cur = CStr(stack.Item(stack.Count))
         stack.Remove stack.Count
 
-        ' --- ファイル列挙（.pptx） ---
+        ' --- pptxファイル列挙 ---
         f = Dir$(cur & "*.pptx", vbNormal)
         Do While Len(f) > 0
             If Left$(f, 2) <> "~$" Then
@@ -497,3 +553,23 @@ Private Sub CollectPptxFiles_NoFSO(ByVal root As String, ByRef outCol As Collect
         Loop
     Loop
 End Sub
+
+' ==== 経過時間フォーマット関数 & 補助 ====
+Private Function FormatElapsed(ByVal secs As Double) As String
+    Dim h As Long, m As Long
+    Dim s As Double
+    If secs < 0 Then secs = 0
+    h = CLng(secs \ 3600)
+    m = CLng((secs - h * 3600) \ 60)
+    s = secs - h * 3600 - m * 60
+    FormatElapsed = Format$(h, "00") & ":" & Format$(m, "00") & ":" & Format$(s, "00.0")
+End Function
+
+Private Function CalcElapsed(ByVal tStart As Double, ByVal tEnd As Double) As Double
+    ' 0時跨ぎ（Timer が日付でリセット）のケア
+    If tEnd >= tStart Then
+        CalcElapsed = tEnd - tStart
+    Else
+        CalcElapsed = (86400# - tStart) + tEnd  ' 86400秒 = 24時間
+    End If
+End Function
